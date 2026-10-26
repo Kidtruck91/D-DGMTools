@@ -667,9 +667,20 @@
     ev.preventDefault();
     const form = ev.target;
     try {
+      const source = form.source.value.trim();
+      if (source) { state.prefs.lastSource = source; savePrefs(); }
+      const chunks = GM.splitStatBlocks(form.text.value);
+      if (chunks.length > 1) {
+        const parsed = chunks.map((chunk) => {
+          try { const m = GM.parseStatBlock(chunk); if (!m.source) m.source = source; return m; }
+          catch (e) { return null; }
+        }).filter(Boolean);
+        $("#paste-dialog").close();
+        openBulkReview(parsed);
+        return;
+      }
       const m = GM.parseStatBlock(form.text.value);
-      if (!m.source) m.source = form.source.value.trim();
-      if (form.source.value.trim()) { state.prefs.lastSource = form.source.value.trim(); savePrefs(); }
+      if (!m.source) m.source = source;
       $("#paste-dialog").close();
       openCreatureEditor({ mode: "library", item: m, fresh: true, title: "Check " + m.name });
       const found = [m.hp != null && "HP", m.ac != null && "AC", m.attacks.length && m.attacks.length + " attacks"].filter(Boolean);
@@ -677,6 +688,41 @@
     } catch (e) {
       $("#paste-error").textContent = e.message;
     }
+  });
+
+  /* ---------- Review several pasted monsters ---------- */
+  let bulkItems = [];
+  const monsterKey = (m) => (m.name + "|" + (m.source || "")).toLowerCase();
+  function openBulkReview(items) {
+    bulkItems = items;
+    const existing = new Set(state.monsters.map(monsterKey));
+    $("#bulk-title").textContent = "Review " + items.length + " monsters";
+    $("#bulk-list").innerHTML = items.map((m, i) => {
+      const have = existing.has(monsterKey(m));
+      const warn = [m.hp == null && "no HP found", m.ac == null && "no AC found", !m.attacks.length && "no attacks found", have && "already in your library"].filter(Boolean);
+      return '<li><label><input type="checkbox" data-bulk="' + i + '"' + (have ? "" : " checked") + "><span>" +
+        '<span class="b-name">' + esc(m.name) + '</span><br><span class="b-meta">' + esc(monsterMeta(m)) + "</span>" +
+        (warn.length ? '<br><span class="b-warn">' + esc(warn.join(", ").replace(/^./, (c) => c.toUpperCase())) + "</span>" : "") +
+        "</span></label></li>";
+    }).join("");
+    updateBulkButton();
+    $("#bulk-dialog").showModal();
+  }
+  function updateBulkButton() {
+    const n = $$("[data-bulk]:checked").length;
+    const btn = $("#bulk-save");
+    btn.textContent = n === 1 ? "Save 1 monster" : "Save " + n + " monsters";
+    btn.disabled = n === 0;
+  }
+  $("#bulk-list").addEventListener("change", updateBulkButton);
+  $("#bulk-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const chosen = $$("[data-bulk]:checked").map((b) => bulkItems[+b.dataset.bulk]);
+    chosen.forEach((m) => state.monsters.push(Object.assign({ id: uid() }, m)));
+    saveMonsters();
+    renderLibrary();
+    $("#bulk-dialog").close();
+    toast("Saved " + chosen.length + " monster" + (chosen.length === 1 ? "" : "s") + " to your library.");
   });
 
   /* ---------- Add monsters to combat ---------- */

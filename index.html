@@ -73,7 +73,7 @@
       <div class="toolbar wrap">
         <input type="search" id="lib-search" placeholder="Search your monsters" aria-label="Search your monsters">
         <select id="lib-source" aria-label="Filter by source"></select>
-        <button class="btn primary" id="paste-statblock">Paste stat block</button>
+        <button class="btn primary" id="paste-statblock">Paste stat blocks</button>
         <button class="btn" id="new-monster">New monster</button>
         <details class="menu">
           <summary class="btn ghost">File</summary>
@@ -168,14 +168,27 @@
 <!-- Paste stat block -->
 <dialog id="paste-dialog" class="sheet">
   <form method="dialog" id="paste-form">
-    <h2>Paste a stat block</h2>
-    <p class="hint">On D&amp;D Beyond, open the monster's page, select from its name to the end of its actions, copy, and paste it here. Book PDFs and other sites work too.</p>
-    <label>Stat block<textarea name="text" rows="12" required placeholder="Sahuagin&#10;Medium humanoid (sahuagin), lawful evil&#10;Armor Class 12 (natural armor)&#10;Hit Points 22 (4d8 + 4)&#10;…"></textarea></label>
+    <h2>Paste stat blocks</h2>
+    <p class="hint">On D&amp;D Beyond, open a monster's page, select from its name to the end of its actions, copy, and paste it here. Paste as many monsters as you like, one after another; you'll review them before they're saved. Book PDFs and other sites work too.</p>
+    <label>Stat blocks<textarea name="text" rows="12" required placeholder="Sahuagin&#10;Medium humanoid (sahuagin), lawful evil&#10;Armor Class 12 (natural armor)&#10;Hit Points 22 (4d8 + 4)&#10;…"></textarea></label>
     <label>Source book<input name="source" list="source-options" placeholder="Used when the stat block doesn't say"></label>
     <p class="form-error" id="paste-error" role="alert"></p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" data-close>Cancel</button>
       <button type="submit" class="btn primary">Read stat block</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Review several pasted monsters -->
+<dialog id="bulk-dialog" class="sheet">
+  <form method="dialog" id="bulk-form">
+    <h2 id="bulk-title">Review monsters</h2>
+    <p class="hint">Uncheck any you don't want. Monsters with a warning are worth a look after saving; tap Edit on them in your library.</p>
+    <ul class="bulk-list" id="bulk-list"></ul>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="bulk-save">Save monsters</button>
     </div>
   </form>
 </dialog>

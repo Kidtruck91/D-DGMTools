@@ -21,7 +21,8 @@ Your monsters and the current combat are saved on the device automatically. Use 
 - Save and load combats as files. Files saved by the old Python tracker still load.
 
 **Monsters**
-- **Paste stat block**: copy a monster from D&D Beyond (or a PDF or website) and paste it in. Name, AC, HP, initiative bonus, traits, attacks, damage and multiattack counts are filled in for you to check before saving. Handles both the 2014 and 2024 stat block styles.
+- **Paste stat blocks**: copy a monster from D&D Beyond (or a PDF or website) and paste it in. Name, AC, HP, initiative bonus, traits, attacks, damage and multiattack counts are filled in for you to check before saving. Handles both the 2014 and 2024 stat block styles.
+- **Bulk paste**: paste several stat blocks one after another in the same box. The app splits them apart and shows a checklist, flagging any that are missing HP, AC or attacks, or that you already have. A line of `---` between monsters forces a split if one is ever missed.
 - **Find on Open5e**: browse free SRD and third-party monsters by source book, or search by name, and save them to your library.
 - Filter your library by source book (Ghosts of Saltmarsh, Basic Rules, homebrew…).
 - **File → Import** accepts `saltmarsh_monsters.json` from the old Python tracker.

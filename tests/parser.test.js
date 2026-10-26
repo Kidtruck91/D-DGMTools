@@ -148,4 +148,22 @@ test("Open5e record mapping", () => {
   assert.ok(/Nimble Escape/.test(m.traits));
 });
 
+test("splits several pasted stat blocks", () => {
+  const blocks = GM.splitStatBlocks(classic + "\n\n" + ddbLayout + "\n\n" + modern);
+  assert.strictEqual(blocks.length, 3);
+  assert.deepStrictEqual(blocks.map((b) => GM.parseStatBlock(b).name), ["Ogre", "Owlbear", "Bandit Captain"]);
+  // The Owlbear's source line stays with the Owlbear, not the next monster.
+  assert.strictEqual(GM.parseStatBlock(blocks[1]).source, "Basic Rules");
+  assert.strictEqual(GM.parseStatBlock(blocks[1]).attacks.length, 2);
+});
+
+test("separator lines split blocks too", () => {
+  const blocks = GM.splitStatBlocks("Monsters for tonight\n---\n" + classic + "\n---\n" + modern);
+  assert.deepStrictEqual(blocks.map((b) => GM.parseStatBlock(b).name), ["Ogre", "Bandit Captain"]);
+});
+
+test("a single stat block stays whole", () => {
+  assert.strictEqual(GM.splitStatBlocks(ddbLayout).length, 1);
+});
+
 console.log(`\n${passed} passed`);

@@ -223,6 +223,36 @@
     return monster;
   }
 
+  /* ---------- Several stat blocks pasted together ---------- */
+  const SIZE_TYPE = /^(tiny|small|medium|large|huge|gargantuan)\b(?:\s+or\s+\w+)?[\s,]+\w/i;
+  const SEPARATOR = /^\s*(?:-{3,}|={3,}|\*{3,})\s*$/;
+
+  // Splits pasted text into one chunk per monster. A monster starts at the
+  // line before a "Medium humanoid…" line that is followed by an AC line,
+  // or after a separator line such as ---.
+  function splitStatBlocks(rawText) {
+    const lines = String(rawText || "").replace(/\r/g, "").split("\n");
+    const starts = new Set();
+    lines.forEach((line, i) => {
+      if (SEPARATOR.test(line)) { starts.add(i + 1); return; }
+      if (!SIZE_TYPE.test(line.trim())) return;
+      const ahead = lines.slice(i + 1, i + 7).join("\n");
+      if (!/^\s*(?:Armor Class|AC)\b/im.test(ahead)) return;
+      let j = i - 1;
+      while (j > 0 && !lines[j].trim()) j--;
+      starts.add(Math.max(0, j));
+    });
+    const sorted = [0].concat(Array.from(starts).filter((s) => s > 0).sort((a, b) => a - b));
+    const chunks = [];
+    sorted.forEach((start, k) => {
+      const end = k + 1 < sorted.length ? sorted[k + 1] : lines.length;
+      const chunk = lines.slice(start, end).filter((l) => !SEPARATOR.test(l)).join("\n").trim();
+      if (chunk) chunks.push(chunk);
+    });
+    // Text before the first real stat block (stray headings) is not a monster.
+    return chunks.filter((c) => /\b(?:Armor Class|AC|Hit Points|HP)\b/.test(c));
+  }
+
   /* ---------- Open5e ---------- */
   function fromOpen5e(rec) {
     const monster = {
@@ -264,7 +294,7 @@
     return monster;
   }
 
-  const api = { roll, rollD20, abilityMod, parseAction, applyMultiattack, parseStatBlock, fromOpen5e, isDice };
+  const api = { roll, rollD20, abilityMod, parseAction, applyMultiattack, parseStatBlock, splitStatBlocks, fromOpen5e, isDice };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GM = api;
 })(typeof window !== "undefined" ? window : globalThis);
