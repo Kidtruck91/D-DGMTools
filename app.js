@@ -1,0 +1,856 @@
+/* GM Tools — combat tracker, monster library, Open5e browser and dice roller. */
+(function () {
+  "use strict";
+  const GM = window.GM;
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  const OPEN5E = "https://api.open5e.com/v1";
+  const CONDITIONS = ["Blinded", "Charmed", "Concentrating", "Deafened", "Frightened", "Grappled", "Incapacitated", "Invisible", "Paralyzed", "Petrified", "Poisoned", "Prone", "Restrained", "Stunned", "Unconscious"];
+
+  /* ---------- Storage ---------- */
+  const store = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem("gmtools." + key); return v == null ? fallback : JSON.parse(v); }
+      catch (e) { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem("gmtools." + key, JSON.stringify(value)); return true; }
+      catch (e) { toast("Couldn't save on this device. Export your monsters to a file to keep them."); return false; }
+    },
+  };
+
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  let orderCounter = Date.now();
+
+  const state = {
+    combat: store.get("combat", { round: 1, activeId: null, entities: [] }),
+    monsters: store.get("monsters", []),
+    prefs: store.get("prefs", {}),
+    selectedId: null,
+    lastRoll: null,
+    log: store.get("log", []),
+  };
+  state.combat.entities.forEach((e) => { e.id = e.id || uid(); e.order = e.order || ++orderCounter; });
+  state.monsters.forEach((m) => { m.id = m.id || uid(); });
+
+  const saveCombat = () => { store.set("combat", state.combat); store.set("log", state.log.slice(0, 80)); };
+  const saveMonsters = () => store.set("monsters", state.monsters);
+  const savePrefs = () => store.set("prefs", state.prefs);
+
+  /* ---------- Small helpers ---------- */
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function int(v, fallback) {
+    const t = String(v == null ? "" : v).trim().replace(/[−–]/g, "-");
+    if (t === "") return fallback;
+    if (!/^[+-]?\d+$/.test(t)) throw new Error("“" + t + "” isn't a whole number.");
+    return parseInt(t, 10);
+  }
+  const signed = (n) => (n >= 0 ? "+" : "−") + Math.abs(n);
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  let toastTimer;
+  function toast(msg) {
+    const t = $("#toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  }
+  function hpClass(hp, max) {
+    const f = max ? hp / max : 1;
+    return f <= 0.25 ? "low" : f <= 0.5 ? "mid" : "";
+  }
+  function download(name, data) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+  function pickFile(handler) {
+    const input = $("#file-input");
+    input.value = "";
+    input.onchange = () => {
+      const file = input.files[0];
+      if (!file) return;
+      file.text().then((text) => {
+        let data;
+        try { data = JSON.parse(text); } catch (e) { toast("That file isn't valid JSON."); return; }
+        handler(data, file.name);
+      });
+    };
+    input.click();
+  }
+
+  /* ---------- Views ---------- */
+  function showView(name) {
+    $$(".tab").forEach((t) => {
+      if (t.dataset.view === name) t.setAttribute("aria-current", "page");
+      else t.removeAttribute("aria-current");
+    });
+    $$(".view").forEach((v) => { v.hidden = v.id !== "view-" + name; });
+    state.prefs.view = name;
+    savePrefs();
+    if (name === "monsters") renderLibrary();
+  }
+  $$(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
+
+  function applyTheme() {
+    const theme = state.prefs.theme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+    document.documentElement.dataset.theme = theme;
+    $("#theme-btn").textContent = theme === "dark" ? "Light" : "Dark";
+    $('meta[name="theme-color"]').setAttribute("content", theme === "dark" ? "#15232A" : "#E4EBE8");
+  }
+  $("#theme-btn").addEventListener("click", () => {
+    state.prefs.theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    savePrefs();
+    applyTheme();
+  });
+
+  // Keep the tablet screen awake during play.
+  let wakeLock = null;
+  async function setWake(on) {
+    const btn = $("#wake-btn");
+    if (!("wakeLock" in navigator)) { btn.hidden = true; return; }
+    try {
+      if (on) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => { if (!document.hidden) updateWakeBtn(false); }); }
+      else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+      updateWakeBtn(on);
+    } catch (e) { updateWakeBtn(false); toast("This browser won't keep the screen on right now."); }
+  }
+  function updateWakeBtn(on) {
+    const btn = $("#wake-btn");
+    btn.setAttribute("aria-pressed", String(on));
+    btn.textContent = "Screen stays on: " + (on ? "on" : "off");
+    state.prefs.wake = on;
+    savePrefs();
+  }
+  $("#wake-btn").addEventListener("click", () => setWake($("#wake-btn").getAttribute("aria-pressed") !== "true"));
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && state.prefs.wake && !wakeLock) setWake(true); });
+
+  /* ---------- Combat model ---------- */
+  function sorted() {
+    return state.combat.entities.slice().sort((a, b) =>
+      (b.initiative - a.initiative) ||
+      ((a.kind === "event") - (b.kind === "event")) ||
+      ((b.initiative_bonus || 0) - (a.initiative_bonus || 0)) ||
+      (a.order - b.order));
+  }
+  const byId = (id) => state.combat.entities.find((e) => e.id === id);
+
+  function addLog(text) {
+    state.log.unshift(text);
+    state.log.length = Math.min(state.log.length, 80);
+  }
+
+  function addEntity(item) {
+    item.id = uid();
+    item.order = ++orderCounter;
+    if (item.kind === "creature") {
+      item.conditions = item.conditions || [];
+      if (item.hp != null && item.max_hp == null) item.max_hp = item.hp;
+    }
+    state.combat.entities.push(item);
+    return item;
+  }
+
+  function nextTurn() {
+    const list = sorted();
+    if (!list.length) { toast("Add a creature or event first."); return; }
+    const idx = list.findIndex((e) => e.id === state.combat.activeId);
+    let next;
+    if (idx < 0) { next = 0; }
+    else if (idx + 1 >= list.length) { next = 0; state.combat.round += 1; }
+    else { next = idx + 1; }
+    setActive(list[next]);
+  }
+  function prevTurn() {
+    const list = sorted();
+    const idx = list.findIndex((e) => e.id === state.combat.activeId);
+    if (idx < 0) return;
+    if (idx === 0) {
+      if (state.combat.round === 1) { toast("This is the first turn."); return; }
+      state.combat.round -= 1;
+      setActive(list[list.length - 1], true);
+    } else {
+      setActive(list[idx - 1], true);
+    }
+  }
+  function setActive(entity, back) {
+    state.combat.activeId = entity.id;
+    state.selectedId = entity.id;
+    addLog((back ? "Back to " : "") + "Round " + state.combat.round + ": " + entity.name + (entity.kind === "event" && entity.description ? " — " + entity.description : ""));
+    saveCombat();
+    renderCombat();
+    const row = $('[data-id="' + entity.id + '"]');
+    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function removeEntity(id) {
+    const list = sorted();
+    const idx = list.findIndex((e) => e.id === id);
+    if (idx < 0) return;
+    const entity = list[idx];
+    state.combat.entities = state.combat.entities.filter((e) => e.id !== id);
+    if (state.combat.activeId === id) {
+      // The removed creature's turn ends; the next one in order takes over.
+      const rest = sorted();
+      if (!rest.length) state.combat.activeId = null;
+      else if (idx >= rest.length) { state.combat.round += 1; state.combat.activeId = rest[0].id; }
+      else state.combat.activeId = rest[idx].id;
+    }
+    if (state.selectedId === id) state.selectedId = state.combat.activeId;
+    addLog("Removed " + entity.name);
+    saveCombat();
+    renderCombat();
+  }
+
+  function changeHp(entity, mode, amount) {
+    if (entity.hp == null) { toast("Edit this creature to set its HP first."); return; }
+    const max = entity.max_hp != null ? entity.max_hp : entity.hp;
+    if (mode === "damage") {
+      let left = amount;
+      const temp = entity.temp_hp || 0;
+      if (temp) { const used = Math.min(temp, left); entity.temp_hp = temp - used; left -= used; }
+      entity.hp = Math.max(0, entity.hp - left);
+      addLog(entity.name + " takes " + amount + (temp ? " (" + (amount - left) + " from temp HP)" : "") + " → " + entity.hp + "/" + max);
+      if (entity.hp === 0) toast(entity.name + " is down.");
+      const conc = (entity.conditions || []).includes("Concentrating");
+      if (conc && amount > 0) addLog(entity.name + " makes a Concentration save, DC " + Math.max(10, Math.floor(amount / 2)));
+    } else if (mode === "heal") {
+      entity.hp = Math.min(max, entity.hp + amount);
+      addLog(entity.name + " heals " + amount + " → " + entity.hp + "/" + max);
+    } else if (mode === "temp") {
+      entity.temp_hp = Math.max(entity.temp_hp || 0, amount);
+      addLog(entity.name + " has " + entity.temp_hp + " temp HP");
+    }
+    saveCombat();
+    renderCombat();
+  }
+
+  /* ---------- Rolling ---------- */
+  function showRoll(num, what, kind) {
+    state.lastRoll = { num, what, kind: kind || "" };
+    addLog(what + " = " + num);
+    saveCombat();
+    renderDetail();
+  }
+  function rollAttack(entity, attack, mode) {
+    const d = GM.rollD20(mode);
+    const bonus = attack.bonus || 0;
+    const tag = d.value === 20 ? "crit" : d.value === 1 ? "fumble" : "";
+    const dice = d.rolls.length > 1 ? "[" + d.rolls.join(", ") + "] " + (mode === "adv" ? "adv" : "dis") : d.value;
+    showRoll(d.value + bonus, entity.name + " · " + attack.name + " to hit: " + dice + " " + signed(bonus) + (tag === "crit" ? " — natural 20" : tag === "fumble" ? " — natural 1" : ""), tag);
+  }
+  function rollDamage(entity, attack, crit) {
+    if (!attack.damage) { toast(attack.name + " has no damage dice."); return; }
+    try {
+      const r = GM.roll(attack.damage, { crit });
+      showRoll(r.total, entity.name + " · " + attack.name + (crit ? " critical" : "") + " damage: " + r.detail, crit ? "crit" : "");
+    } catch (e) { toast(e.message); }
+  }
+  function rollMultiattack(entity) {
+    const lines = [];
+    let total = 0;
+    for (const attack of entity.attacks || []) {
+      const times = Math.max(0, Math.min(20, attack.count == null ? 1 : attack.count));
+      for (let i = 0; i < times; i++) {
+        let line = attack.name + ": ";
+        if (attack.bonus != null) {
+          const d = GM.rollD20();
+          line += "hits " + (d.value + attack.bonus) + (d.value === 20 ? " (nat 20)" : d.value === 1 ? " (nat 1)" : "");
+        }
+        if (attack.damage) {
+          try { const r = GM.roll(attack.damage); line += (attack.bonus != null ? ", " : "") + r.total + " damage"; total += r.total; }
+          catch (e) { line += "bad damage dice"; }
+        }
+        lines.push(line);
+      }
+    }
+    if (!lines.length) { toast("Set multiattack uses on this creature's attacks."); return; }
+    lines.slice().reverse().forEach((l) => addLog("  " + l));
+    showRoll(total, entity.name + " multiattack — " + lines.join("; ") + " · total damage if all hit", "");
+  }
+  function rollInitiative(bonus) { return 1 + Math.floor(Math.random() * 20) + (bonus || 0); }
+
+  /* ---------- Combat rendering ---------- */
+  function renderCombat() {
+    const { round, activeId } = state.combat;
+    const active = byId(activeId);
+    $("#round-num").textContent = round;
+    $("#turn-who").textContent = active ? active.name + (active.kind === "event" ? "" : "’s turn") : state.combat.entities.length ? "Ready. Start combat when everyone has initiative." : "Add combatants, then start the first turn.";
+    $("#next-turn").textContent = active ? "Next turn" : "Start combat";
+    $("#prev-turn").disabled = !active;
+
+    const list = sorted();
+    const ol = $("#order");
+    if (!list.length) {
+      ol.innerHTML = '<li class="order-empty">No one is in this fight yet. Use Add monsters to pull from your library, or Add creature for players and one-off foes.</li>';
+    } else {
+      ol.innerHTML = list.map((e) => {
+        const cls = ["combatant", e.kind === "event" ? "event" : "", e.id === activeId ? "active" : "", e.kind === "creature" && e.hp === 0 ? "down" : ""].join(" ");
+        let sub = "";
+        if (e.kind === "creature") {
+          const max = e.max_hp != null ? e.max_hp : e.hp;
+          if (e.hp != null) sub += '<span class="mini-bar" aria-hidden="true"><i class="' + hpClass(e.hp, max) + '" style="width:' + (max ? Math.round((e.hp / max) * 100) : 0) + '%"></i></span><span>' + e.hp + "/" + max + (e.temp_hp ? " +" + e.temp_hp : "") + "</span>";
+          (e.conditions || []).forEach((c) => { sub += '<span class="chip">' + esc(c) + "</span>"; });
+        } else {
+          sub = '<span>' + esc((e.description || "Event").slice(0, 70)) + "</span>";
+        }
+        return '<li class="' + cls + '" data-id="' + e.id + '" role="option" tabindex="0" aria-selected="' + (e.id === state.selectedId) + '">' +
+          '<span class="init-badge">' + e.initiative + "</span>" +
+          '<div class="c-main"><div class="c-name">' + esc(e.name) + "</div><div class=\"c-sub\">" + sub + "</div></div>" +
+          '<span class="c-ac">' + (e.kind === "creature" && e.ac != null ? "AC " + e.ac : "") + "</span></li>";
+      }).join("");
+    }
+    renderDetail();
+  }
+
+  let detailShownId = null;
+  function renderDetail() {
+    const el = $("#detail");
+    if (detailShownId !== state.selectedId) { el.scrollTop = 0; detailShownId = state.selectedId; }
+    const e = byId(state.selectedId);
+    const last = state.lastRoll;
+    const lastHtml = last ? '<div class="last-roll ' + last.kind + '"><span class="num">' + esc(last.num) + '</span><span class="what">' + esc(last.what) + "</span></div>" : "";
+    const logHtml = state.log.length ? '<div class="d-section"><h3>Combat log</h3><ol class="log">' + state.log.slice(0, 40).map((l) => "<li>" + esc(l) + "</li>").join("") + "</ol></div>" : "";
+    if (!e) {
+      el.innerHTML = '<p class="detail-empty">Tap a combatant to see their stats, roll their attacks and track their HP.</p>' + lastHtml + logHtml;
+      return;
+    }
+    const head = '<div class="d-head"><div style="flex:1"><h2>' + esc(e.name) + '</h2><div class="d-meta">Initiative ' + e.initiative + (e.kind === "creature" ? " · bonus " + signed(e.initiative_bonus || 0) : " · event") + (e.source ? " · " + esc(e.source) : "") + "</div></div>" +
+      '<div class="d-actions"><button class="btn small" data-act="edit">Edit</button><button class="btn small ghost danger-text" data-act="remove">Remove</button></div></div>';
+    if (e.kind === "event") {
+      el.innerHTML = head + '<p class="traits">' + esc(e.description || "No description.") + "</p>" + lastHtml + logHtml;
+      return;
+    }
+    const max = e.max_hp != null ? e.max_hp : e.hp;
+    const vitals = '<div class="vitals">' +
+      (e.hp != null
+        ? '<div class="hp-read"><span class="now">' + e.hp + '</span><span class="max"> / ' + max + "</span>" + (e.temp_hp ? '<span class="temp">+' + e.temp_hp + " temp HP</span>" : "") + "</div>" +
+          '<div><div class="hp-bar" role="meter" aria-label="Hit points" aria-valuemin="0" aria-valuemax="' + max + '" aria-valuenow="' + e.hp + '"><i class="' + hpClass(e.hp, max) + '" style="width:' + (max ? Math.round((e.hp / max) * 100) : 0) + '%"></i></div>' +
+          '<div class="ac-read">AC <b>' + (e.ac != null ? e.ac : "—") + "</b></div></div>" +
+          '<div class="hp-entry"><input id="hp-amount" inputmode="numeric" pattern="[0-9]*" placeholder="Amount" aria-label="HP amount">' +
+          '<button class="btn hurt" data-hp="damage">Damage</button><button class="btn mend" data-hp="heal">Heal</button><button class="btn ghost" data-hp="temp">Temp HP</button></div>'
+        : '<div class="ac-read">HP not tracked · AC <b>' + (e.ac != null ? e.ac : "—") + "</b></div>") +
+      "</div>";
+    const conds = '<div class="d-section"><h3>Conditions</h3><div class="conditions">' + CONDITIONS.map((c) => '<button class="cond" data-cond="' + c + '" aria-pressed="' + (e.conditions || []).includes(c) + '">' + c + "</button>").join("") + "</div></div>";
+    const attacks = (e.attacks || []).map((a, i) =>
+      '<div class="attack"><div class="attack-name">' + esc(a.name) + "</div>" +
+      '<div class="attack-stats">' + (a.bonus != null ? signed(a.bonus) + " to hit" : "No attack roll") + (a.damage ? " · " + esc(a.damage) : "") + (e.ma ? " · ×" + (a.count == null ? 1 : a.count) + " in multiattack" : "") + "</div>" +
+      '<div class="attack-buttons">' +
+      (a.bonus != null ? '<button class="btn small" data-atk="' + i + '" data-roll="hit">Attack</button><button class="btn small ghost" data-atk="' + i + '" data-roll="adv" title="Attack with advantage">Adv</button><button class="btn small ghost" data-atk="' + i + '" data-roll="dis" title="Attack with disadvantage">Dis</button>' : "") +
+      (a.damage ? '<button class="btn small" data-atk="' + i + '" data-roll="dmg">Damage</button>' + (a.bonus != null ? '<button class="btn small ghost" data-atk="' + i + '" data-roll="crit">Crit</button>' : "") : "") +
+      "</div>" +
+      (a.description ? "<details><summary>Details</summary>" + esc(a.description) + "</details>" : "") +
+      "</div>").join("");
+    const attackSection = (e.attacks || []).length || e.ma
+      ? '<div class="d-section"><h3>Attacks and actions</h3>' + (e.ma ? '<p><button class="btn primary" data-act="multi">Roll multiattack</button></p>' : "") + '<div class="attacks">' + attacks + "</div></div>"
+      : "";
+    const traits = e.traits ? '<div class="d-section"><h3>Traits</h3><div class="traits">' + esc(e.traits) + "</div></div>" : "";
+    el.innerHTML = head + vitals + lastHtml + attackSection + conds + traits + logHtml;
+  }
+
+  // Combat events
+  $("#order").addEventListener("click", (ev) => {
+    const row = ev.target.closest("[data-id]");
+    if (!row) return;
+    state.selectedId = row.dataset.id;
+    renderCombat();
+  });
+  $("#order").addEventListener("keydown", (ev) => {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.dataset.id) { ev.preventDefault(); state.selectedId = ev.target.dataset.id; renderCombat(); $('[data-id="' + state.selectedId + '"]').focus(); }
+  });
+  $("#detail").addEventListener("click", (ev) => {
+    const e = byId(state.selectedId);
+    if (!e) return;
+    const t = ev.target.closest("button");
+    if (!t) return;
+    if (t.dataset.act === "edit") return e.kind === "event" ? openEventEditor(e) : openCreatureEditor({ mode: "combat", item: e });
+    if (t.dataset.act === "remove") { if (confirm("Remove " + e.name + " from combat?")) removeEntity(e.id); return; }
+    if (t.dataset.act === "multi") return rollMultiattack(e);
+    if (t.dataset.hp) {
+      const raw = $("#hp-amount").value.trim();
+      if (!/^\d+$/.test(raw)) { toast("Enter a whole number of hit points."); $("#hp-amount").focus(); return; }
+      return changeHp(e, t.dataset.hp, parseInt(raw, 10));
+    }
+    if (t.dataset.cond) {
+      const c = t.dataset.cond;
+      e.conditions = e.conditions || [];
+      e.conditions = e.conditions.includes(c) ? e.conditions.filter((x) => x !== c) : e.conditions.concat(c);
+      addLog(e.name + (e.conditions.includes(c) ? " is now " : " is no longer ") + c.toLowerCase());
+      saveCombat();
+      return renderCombat();
+    }
+    if (t.dataset.atk != null) {
+      const a = e.attacks[+t.dataset.atk];
+      const r = t.dataset.roll;
+      if (r === "hit") rollAttack(e, a);
+      else if (r === "adv" || r === "dis") rollAttack(e, a, r);
+      else if (r === "dmg") rollDamage(e, a, false);
+      else if (r === "crit") rollDamage(e, a, true);
+    }
+  });
+  $("#detail").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && ev.target.id === "hp-amount") { ev.preventDefault(); $('[data-hp="damage"]').click(); }
+  });
+  $("#next-turn").addEventListener("click", nextTurn);
+  $("#prev-turn").addEventListener("click", prevTurn);
+  $("#add-creature").addEventListener("click", () => openCreatureEditor({ mode: "combat" }));
+  $("#add-event").addEventListener("click", () => openEventEditor());
+  $("#add-from-library").addEventListener("click", openAddDialog);
+  $("#new-combat").addEventListener("click", () => {
+    closeMenus();
+    if (state.combat.entities.length && !confirm("Clear this combat? Save it to a file first if you want it later.")) return;
+    state.combat = { round: 1, activeId: null, entities: [] };
+    state.selectedId = null;
+    state.lastRoll = null;
+    state.log = [];
+    saveCombat();
+    renderCombat();
+  });
+  $("#save-combat").addEventListener("click", () => {
+    closeMenus();
+    const list = sorted();
+    download("combat-round-" + state.combat.round + ".json", { version: 2, round: state.combat.round, activeId: state.combat.activeId, turn: list.findIndex((e) => e.id === state.combat.activeId), entities: list });
+  });
+  $("#load-combat").addEventListener("click", () => {
+    closeMenus();
+    pickFile((data) => {
+      const entities = data && data.entities;
+      if (!Array.isArray(entities) || entities.some((e) => !e || !["creature", "event"].includes(e.kind) || !e.name || !Number.isInteger(e.initiative))) {
+        toast("That file isn't a saved combat.");
+        return;
+      }
+      // Older files from the Python tracker store the active turn as a position in the list.
+      const legacyActive = Number.isInteger(data.turn) && data.turn >= 0 ? entities[data.turn] : null;
+      state.combat = { round: Math.max(1, parseInt(data.round, 10) || 1), activeId: null, entities: [] };
+      entities.forEach((e) => { const item = clone(e); const keepId = item.id; addEntity(item); if (keepId) item.id = keepId; });
+      const active = data.activeId ? byId(data.activeId) : legacyActive ? state.combat.entities[entities.indexOf(legacyActive)] : null;
+      state.combat.activeId = active ? active.id : null;
+      state.selectedId = state.combat.activeId;
+      state.log = ["Loaded combat at round " + state.combat.round];
+      saveCombat();
+      renderCombat();
+      toast("Combat loaded.");
+    });
+  });
+  function closeMenus() { $$("details.menu[open]").forEach((d) => d.removeAttribute("open")); }
+  document.addEventListener("click", (ev) => { if (!ev.target.closest("details.menu")) closeMenus(); });
+
+  /* ---------- Creature editor ---------- */
+  let editorCtx = null;
+  function attackRow(a) {
+    const div = document.createElement("div");
+    div.className = "attack-row";
+    div.innerHTML =
+      '<label class="name">Name<input data-f="name" value="' + esc(a.name) + '"></label>' +
+      '<label>Attack bonus<input data-f="bonus" inputmode="numeric" placeholder="None" value="' + esc(a.bonus == null ? "" : a.bonus) + '"></label>' +
+      '<label>Damage<input data-f="damage" placeholder="2d6+3" value="' + esc(a.damage) + '"></label>' +
+      '<label>Multiattack uses<input data-f="count" inputmode="numeric" value="' + esc(a.count == null ? 1 : a.count) + '"></label>' +
+      '<button type="button" class="btn ghost small danger-text" data-remove-attack aria-label="Remove attack">Remove</button>' +
+      '<label class="desc">Description<textarea data-f="description" rows="2">' + esc(a.description) + "</textarea></label>";
+    return div;
+  }
+  function refreshSourceOptions() {
+    const sources = Array.from(new Set(state.monsters.map((m) => m.source).filter(Boolean))).sort();
+    $("#source-options").innerHTML = sources.map((s) => '<option value="' + esc(s) + '">').join("");
+    return sources;
+  }
+  function openCreatureEditor(ctx) {
+    editorCtx = ctx;
+    const form = $("#creature-form");
+    const item = ctx.item || { name: "", initiative: "", initiative_bonus: "", hp: null, max_hp: null, ac: null, source: ctx.mode === "library" ? state.prefs.lastSource || "" : "", traits: "", ma: false, attacks: [] };
+    $("#creature-title").textContent = ctx.title || (ctx.item && !ctx.fresh ? "Edit " + item.name : ctx.mode === "library" ? "New monster" : "Add creature");
+    $("#creature-save").textContent = ctx.mode === "library" ? "Save to my monsters" : ctx.item && !ctx.fresh ? "Save changes" : "Add to combat";
+    $$("[data-combat-only]", form).forEach((el) => { el.hidden = ctx.mode === "library"; });
+    form.name.value = item.name || "";
+    form.initiative.value = item.initiative == null ? "" : item.initiative;
+    form.initiative_bonus.value = item.initiative_bonus == null ? "" : item.initiative_bonus;
+    form.hp.value = item.hp == null ? "" : item.hp;
+    form.max_hp.value = item.max_hp == null || item.max_hp === item.hp ? "" : item.max_hp;
+    form.ac.value = item.ac == null ? "" : item.ac;
+    form.source.value = item.source || "";
+    form.traits.value = item.traits || "";
+    form.ma.checked = !!item.ma;
+    const rows = $("#attack-rows");
+    rows.innerHTML = "";
+    (item.attacks || []).forEach((a) => rows.appendChild(attackRow(a)));
+    $("#creature-error").textContent = "";
+    refreshSourceOptions();
+    $("#creature-dialog").showModal();
+    if (!item.name) form.name.focus();
+  }
+  $("#add-attack-row").addEventListener("click", () => {
+    const row = attackRow({ name: "", bonus: "", damage: "", count: 1, description: "" });
+    $("#attack-rows").appendChild(row);
+    row.querySelector("input").focus();
+  });
+  $("#attack-rows").addEventListener("click", (ev) => { if (ev.target.closest("[data-remove-attack]")) ev.target.closest(".attack-row").remove(); });
+  $("#roll-init").addEventListener("click", () => {
+    const form = $("#creature-form");
+    let bonus = 0;
+    try { bonus = int(form.initiative_bonus.value, 0); } catch (e) { $("#creature-error").textContent = "Initiative bonus: " + e.message; return; }
+    const total = rollInitiative(bonus);
+    form.initiative.value = total;
+    toast("Initiative: d20 " + signed(bonus) + " = " + total);
+  });
+  $("#creature-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const form = ev.target;
+    try {
+      const name = form.name.value.trim();
+      if (!name) throw new Error("Give the creature a name.");
+      const hp = int(form.hp.value, null);
+      const attacks = $$(".attack-row", form).map((row, i) => {
+        const f = (k) => row.querySelector('[data-f="' + k + '"]').value.trim();
+        const label = "Attack " + (i + 1) + ": ";
+        if (!f("name")) throw new Error(label + "give it a name or remove it.");
+        const damage = f("damage").replace(/\s+/g, "");
+        if (damage && !GM.isDice(damage)) throw new Error(label + "damage should look like 2d6+3.");
+        let count;
+        try { count = int(f("count"), 1); } catch (e) { throw new Error(label + "multiattack uses must be a number."); }
+        if (count < 0 || count > 20) throw new Error(label + "multiattack uses must be 0–20.");
+        let bonus;
+        try { bonus = int(f("bonus"), null); } catch (e) { throw new Error(label + "attack bonus must be a number, or blank."); }
+        return { name: f("name"), bonus, damage, count, description: f("description") };
+      });
+      const data = {
+        kind: "creature",
+        name,
+        initiative_bonus: int(form.initiative_bonus.value, 0),
+        hp,
+        max_hp: int(form.max_hp.value, hp),
+        ac: int(form.ac.value, null),
+        source: form.source.value.trim(),
+        traits: form.traits.value.trim(),
+        ma: form.ma.checked,
+        attacks,
+      };
+      if (editorCtx.mode === "library") {
+        if (data.source) { state.prefs.lastSource = data.source; savePrefs(); }
+        if (editorCtx.item && !editorCtx.fresh) Object.assign(editorCtx.item, data);
+        else state.monsters.push(Object.assign({ id: uid() }, data));
+        saveMonsters();
+        renderLibrary();
+        toast(name + " saved to your monsters.");
+      } else {
+        data.initiative = int(form.initiative.value, null);
+        if (data.initiative == null) data.initiative = rollInitiative(data.initiative_bonus);
+        if (editorCtx.item && !editorCtx.fresh) {
+          const target = editorCtx.item;
+          if (target.hp != null && data.hp != null && data.max_hp === data.hp && target.max_hp != null && form.max_hp.value === "") data.max_hp = Math.max(target.max_hp, data.hp);
+          Object.assign(target, data);
+          addLog("Edited " + name);
+        } else {
+          const added = addEntity(data);
+          state.selectedId = added.id;
+          addLog(name + " joins at initiative " + data.initiative);
+        }
+        saveCombat();
+        renderCombat();
+      }
+      $("#creature-dialog").close();
+    } catch (e) {
+      $("#creature-error").textContent = e.message;
+    }
+  });
+
+  /* ---------- Event editor ---------- */
+  let eventTarget = null;
+  function openEventEditor(item) {
+    eventTarget = item || null;
+    const form = $("#event-form");
+    form.name.value = item ? item.name : "";
+    form.initiative.value = item ? item.initiative : 20;
+    form.description.value = item ? item.description || "" : "";
+    $("#event-dialog").showModal();
+  }
+  $("#event-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const form = ev.target;
+    let initiative;
+    try { initiative = int(form.initiative.value, 20); } catch (e) { toast("Initiative: " + e.message); return; }
+    const data = { kind: "event", name: form.name.value.trim() || "Event", initiative, initiative_bonus: 0, description: form.description.value.trim() };
+    if (eventTarget) Object.assign(eventTarget, data);
+    else { const added = addEntity(data); state.selectedId = added.id; addLog(data.name + " added at initiative " + initiative); }
+    saveCombat();
+    renderCombat();
+    $("#event-dialog").close();
+  });
+
+  $$("[data-close]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
+
+  /* ---------- Monster library ---------- */
+  function fillSourceSelect(select, sources, current) {
+    select.innerHTML = '<option value="">All sources</option>' + sources.map((s) => '<option value="' + esc(s) + '"' + (s === current ? " selected" : "") + ">" + esc(s) + "</option>").join("") +
+      (state.monsters.some((m) => !m.source) ? '<option value="__none"' + (current === "__none" ? " selected" : "") + ">No source set</option>" : "");
+  }
+  function filterMonsters(query, source) {
+    const q = query.trim().toLowerCase();
+    return state.monsters
+      .filter((m) => (!q || m.name.toLowerCase().includes(q)) && (!source || (source === "__none" ? !m.source : m.source === source)))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function monsterMeta(m) {
+    return [m.source || "No source", m.hp != null ? "HP " + m.hp : null, m.ac != null ? "AC " + m.ac : null, "Init " + signed(m.initiative_bonus || 0), (m.attacks || []).length + " attack" + ((m.attacks || []).length === 1 ? "" : "s")].filter(Boolean).join(" · ");
+  }
+  function renderLibrary() {
+    const sources = refreshSourceOptions();
+    const sel = $("#lib-source");
+    const current = sel.value || state.prefs.libSource || "";
+    fillSourceSelect(sel, sources, current);
+    const list = filterMonsters($("#lib-search").value, sel.value);
+    $("#lib-count").textContent = state.monsters.length ? list.length + " of " + state.monsters.length + " monsters" : "";
+    $("#lib-list").innerHTML = list.length
+      ? list.map((m) => '<li class="mon"><div><div class="mon-name">' + esc(m.name) + '</div><div class="mon-meta">' + esc(monsterMeta(m)) + "</div></div>" +
+          '<div class="mon-actions"><button class="btn small primary" data-lib="add" data-id="' + m.id + '">Add to combat</button><button class="btn small" data-lib="edit" data-id="' + m.id + '">Edit</button><button class="btn small ghost" data-lib="copy" data-id="' + m.id + '">Duplicate</button><button class="btn small ghost danger-text" data-lib="delete" data-id="' + m.id + '">Delete</button></div></li>').join("")
+      : state.monsters.length
+        ? '<li class="empty">No monsters match. Clear the search or pick another source.</li>'
+        : '<li class="empty">Your library is empty. Paste a stat block from D&amp;D Beyond, find one on Open5e, or import the saltmarsh_monsters.json file from the old tracker with File → Import.</li>';
+  }
+  $("#lib-search").addEventListener("input", renderLibrary);
+  $("#lib-source").addEventListener("change", () => { state.prefs.libSource = $("#lib-source").value; savePrefs(); renderLibrary(); });
+  $("#new-monster").addEventListener("click", () => openCreatureEditor({ mode: "library" }));
+  $("#lib-list").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-lib]");
+    if (!b) return;
+    const m = state.monsters.find((x) => x.id === b.dataset.id);
+    if (!m) return;
+    if (b.dataset.lib === "edit") openCreatureEditor({ mode: "library", item: m });
+    if (b.dataset.lib === "copy") openCreatureEditor({ mode: "library", item: Object.assign(clone(m), { name: m.name + " (copy)" }), fresh: true, title: "Duplicate " + m.name });
+    if (b.dataset.lib === "delete" && confirm("Delete " + m.name + " from your monsters?")) { state.monsters = state.monsters.filter((x) => x !== m); saveMonsters(); renderLibrary(); }
+    if (b.dataset.lib === "add") { openAddDialog(); chooseForAdd(m.id); }
+  });
+  $("#export-lib").addEventListener("click", () => { closeMenus(); download("gm-tools-monsters.json", state.monsters.map(({ id, ...rest }) => rest)); });
+  $("#import-lib").addEventListener("click", () => {
+    closeMenus();
+    pickFile((data) => {
+      const list = Array.isArray(data) ? data : data && Array.isArray(data.monsters) ? data.monsters : null;
+      if (!list) { toast("That file doesn't contain a monster list."); return; }
+      const fallbackSource = prompt("Source book for monsters that don't have one (leave blank to skip):", state.prefs.lastSource || "") || "";
+      const key = (m) => (m.name + "|" + (m.source || "")).toLowerCase();
+      const existing = new Set(state.monsters.map(key));
+      let added = 0, skipped = 0;
+      list.forEach((raw) => {
+        if (!raw || !raw.name) { skipped++; return; }
+        const m = Object.assign({ kind: "creature", initiative_bonus: 0, hp: null, ac: null, traits: "", ma: false, attacks: [] }, clone(raw));
+        delete m.initiative; delete m.conditions; delete m.temp_hp; delete m.order;
+        m.source = m.source || fallbackSource.trim();
+        if (m.max_hp == null) m.max_hp = m.hp;
+        if (existing.has(key(m))) { skipped++; return; }
+        m.id = uid();
+        existing.add(key(m));
+        state.monsters.push(m);
+        added++;
+      });
+      saveMonsters();
+      renderLibrary();
+      toast("Imported " + added + " monster" + (added === 1 ? "" : "s") + (skipped ? "; skipped " + skipped + " already in your library" : "") + ".");
+    });
+  });
+
+  /* ---------- Paste stat block ---------- */
+  $("#paste-statblock").addEventListener("click", () => {
+    const form = $("#paste-form");
+    form.text.value = "";
+    form.source.value = state.prefs.lastSource || "";
+    $("#paste-error").textContent = "";
+    refreshSourceOptions();
+    $("#paste-dialog").showModal();
+    form.text.focus();
+  });
+  $("#paste-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const form = ev.target;
+    try {
+      const m = GM.parseStatBlock(form.text.value);
+      if (!m.source) m.source = form.source.value.trim();
+      if (form.source.value.trim()) { state.prefs.lastSource = form.source.value.trim(); savePrefs(); }
+      $("#paste-dialog").close();
+      openCreatureEditor({ mode: "library", item: m, fresh: true, title: "Check " + m.name });
+      const found = [m.hp != null && "HP", m.ac != null && "AC", m.attacks.length && m.attacks.length + " attacks"].filter(Boolean);
+      toast(found.length ? "Read " + found.join(", ") + ". Check the details, then save." : "Couldn't find stats in that text. Fill them in by hand.");
+    } catch (e) {
+      $("#paste-error").textContent = e.message;
+    }
+  });
+
+  /* ---------- Add monsters to combat ---------- */
+  let addChoice = null;
+  function openAddDialog() {
+    const form = $("#add-form");
+    addChoice = null;
+    form.reset();
+    $("#add-options").disabled = true;
+    $("#add-confirm").disabled = true;
+    $("#add-chosen").textContent = "Choose a monster above";
+    $("[data-fixed]", form).hidden = true;
+    fillSourceSelect($("#add-source"), refreshSourceOptions(), state.prefs.libSource || "");
+    renderAddList();
+    $("#add-dialog").showModal();
+  }
+  function renderAddList() {
+    const list = filterMonsters($("#add-search").value, $("#add-source").value);
+    $("#add-list").innerHTML = list.length
+      ? list.map((m) => '<li><button type="button" data-pick="' + m.id + '" aria-pressed="' + (addChoice && addChoice.id === m.id) + '"><span>' + esc(m.name) + '</span><span class="meta">' + esc(monsterMeta(m)) + "</span></button></li>").join("")
+      : '<li class="empty" style="padding:12px">' + (state.monsters.length ? "No monsters match." : "Your library is empty. Add monsters on the Monsters tab first.") + "</li>";
+  }
+  function chooseForAdd(id) {
+    addChoice = state.monsters.find((m) => m.id === id) || null;
+    if (!addChoice) return;
+    const form = $("#add-form");
+    form.name.value = addChoice.name;
+    $("#add-options").disabled = false;
+    $("#add-confirm").disabled = false;
+    $("#add-chosen").textContent = addChoice.name + " · initiative " + signed(addChoice.initiative_bonus || 0);
+    renderAddList();
+  }
+  $("#add-search").addEventListener("input", renderAddList);
+  $("#add-source").addEventListener("change", renderAddList);
+  $("#add-list").addEventListener("click", (ev) => { const b = ev.target.closest("[data-pick]"); if (b) chooseForAdd(b.dataset.pick); });
+  $("#add-form").initMode.addEventListener("change", (ev) => { $("[data-fixed]", ev.target.form).hidden = ev.target.value !== "fixed"; });
+  $("#add-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    if (!addChoice) return;
+    const form = ev.target;
+    const count = Math.max(1, Math.min(20, parseInt(form.count.value, 10) || 1));
+    const base = form.name.value.trim() || addChoice.name;
+    const bonus = addChoice.initiative_bonus || 0;
+    let fixed = null;
+    if (form.initMode.value === "fixed") {
+      try { fixed = int(form.initValue.value, null); } catch (e) { toast(e.message); return; }
+      if (fixed == null) { toast("Enter an initiative value."); return; }
+    }
+    const group = form.initMode.value === "group" ? rollInitiative(bonus) : null;
+    let first = null;
+    for (let i = 1; i <= count; i++) {
+      const item = clone(addChoice);
+      delete item.id;
+      item.kind = "creature";
+      item.name = count > 1 ? base + " " + i : base;
+      item.initiative = fixed != null ? fixed : group != null ? group : rollInitiative(bonus);
+      item.max_hp = item.max_hp != null ? item.max_hp : item.hp;
+      const added = addEntity(item);
+      first = first || added;
+      addLog(item.name + " joins at initiative " + item.initiative);
+    }
+    state.selectedId = first.id;
+    saveCombat();
+    $("#add-dialog").close();
+    showView("combat");
+    renderCombat();
+    toast(count > 1 ? "Added " + count + " × " + base + "." : base + " added.");
+  });
+
+  /* ---------- Open5e ---------- */
+  let o5Next = null;
+  let o5Docs = null;
+  const o5Cache = new Map();
+  $$(".subtab").forEach((t) => t.addEventListener("click", () => {
+    $$(".subtab").forEach((x) => x.setAttribute("aria-selected", String(x === t)));
+    $("#sub-library").hidden = t.dataset.sub !== "library";
+    $("#sub-open5e").hidden = t.dataset.sub !== "open5e";
+    if (t.dataset.sub === "open5e") loadOpen5eSources();
+  }));
+  async function getJSON(url) {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error("Open5e answered with error " + res.status + ".");
+    return res.json();
+  }
+  async function loadOpen5eSources() {
+    if (o5Docs) return;
+    try {
+      const data = await getJSON(OPEN5E + "/documents/?limit=100");
+      o5Docs = (data.results || []).filter((d) => d.slug).sort((a, b) => a.title.localeCompare(b.title));
+      $("#o5-source").innerHTML = '<option value="">All sources</option>' + o5Docs.map((d) => '<option value="' + esc(d.slug) + '">' + esc(d.title) + "</option>").join("");
+    } catch (e) {
+      $("#o5-status").textContent = "Couldn't reach Open5e. Check your internet connection, then reopen this tab.";
+    }
+  }
+  async function searchOpen5e(url, append) {
+    const status = $("#o5-status");
+    status.textContent = "Searching Open5e…";
+    $("#o5-more").hidden = true;
+    try {
+      const data = await getJSON(url);
+      const results = data.results || [];
+      results.forEach((r) => o5Cache.set(r.slug, r));
+      const html = results.map((r) => {
+        const meta = [r.document__title, r.size && r.type ? r.size + " " + r.type : r.type, r.challenge_rating != null ? "CR " + r.challenge_rating : null, r.hit_points != null ? "HP " + r.hit_points : null, r.armor_class != null ? "AC " + r.armor_class : null].filter(Boolean).join(" · ");
+        const have = state.monsters.some((m) => m.name.toLowerCase() === String(r.name).toLowerCase() && m.source === r.document__title);
+        return '<li class="mon"><div><div class="mon-name">' + esc(r.name) + '</div><div class="mon-meta">' + esc(meta) + "</div></div>" +
+          '<div class="mon-actions"><button class="btn small primary" data-o5="save" data-slug="' + esc(r.slug) + '"' + (have ? " disabled" : "") + ">" + (have ? "In your monsters" : "Save to my monsters") + '</button><button class="btn small" data-o5="review" data-slug="' + esc(r.slug) + '">Review first</button></div></li>';
+      }).join("");
+      if (append) $("#o5-list").insertAdjacentHTML("beforeend", html);
+      else $("#o5-list").innerHTML = html || '<li class="empty">No monsters found. Try a shorter name or another source.</li>';
+      o5Next = data.next || null;
+      $("#o5-more").hidden = !o5Next;
+      status.textContent = (data.count != null ? data.count + " monsters found" : results.length + " shown") + (o5Next ? ". Scroll down for more." : ".");
+    } catch (e) {
+      status.textContent = "Couldn't reach Open5e. Check your internet connection and try again.";
+    }
+  }
+  $("#o5-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const p = new URLSearchParams({ limit: "50", ordering: "name" });
+    const q = $("#o5-search").value.trim();
+    const src = $("#o5-source").value;
+    if (q) p.set("search", q);
+    if (src) p.set("document__slug", src);
+    searchOpen5e(OPEN5E + "/monsters/?" + p.toString(), false);
+  });
+  $("#o5-more").addEventListener("click", () => { if (o5Next) searchOpen5e(o5Next.replace(/^http:/, "https:"), true); });
+  $("#o5-list").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-o5]");
+    if (!b) return;
+    const rec = o5Cache.get(b.dataset.slug);
+    if (!rec) return;
+    const m = GM.fromOpen5e(rec);
+    if (b.dataset.o5 === "review") { openCreatureEditor({ mode: "library", item: m, fresh: true, title: "Check " + m.name }); return; }
+    state.monsters.push(Object.assign({ id: uid() }, m));
+    saveMonsters();
+    b.disabled = true;
+    b.textContent = "In your monsters";
+    toast(m.name + " saved to your monsters.");
+  });
+
+  /* ---------- Dice ---------- */
+  const diceHistory = [];
+  function showDice(total, detail, label, kind) {
+    const out = $("#dice-result");
+    out.className = "dice-result " + (kind || "");
+    out.innerHTML = '<span class="dice-total">' + esc(total) + '</span><span class="dice-detail">' + esc(label + (detail ? " · " + detail : "")) + "</span>";
+    diceHistory.unshift({ total, label, detail });
+    diceHistory.length = Math.min(diceHistory.length, 50);
+    $("#dice-history").innerHTML = diceHistory.map((h) => "<li><b>" + esc(h.total) + "</b> — " + esc(h.label) + (h.detail ? " (" + esc(h.detail) + ")" : "") + "</li>").join("");
+  }
+  function rollExpr(expr) {
+    try {
+      const r = GM.roll(expr);
+      const single = r.dice.length === 1 && r.dice[0].sides === 20 && r.dice[0].values.length === 1 ? r.dice[0].values[0] : 0;
+      showDice(r.total, r.detail, expr, single === 20 ? "crit" : single === 1 ? "fumble" : "");
+    } catch (e) { toast(e.message); }
+  }
+  $("#dice-quick").innerHTML = ["d4", "d6", "d8", "d10", "d12", "d20", "d100"].map((d) => '<button class="btn" data-die="' + d + '">' + d + "</button>").join("");
+  $("#dice-quick").addEventListener("click", (ev) => { const b = ev.target.closest("[data-die]"); if (b) rollExpr(b.dataset.die); });
+  $$("[data-d20]").forEach((b) => b.addEventListener("click", () => {
+    const d = GM.rollD20(b.dataset.d20);
+    showDice(d.value, "[" + d.rolls.join(", ") + "]", "d20 with " + (b.dataset.d20 === "adv" ? "advantage" : "disadvantage"), d.value === 20 ? "crit" : d.value === 1 ? "fumble" : "");
+  }));
+  $("#dice-form").addEventListener("submit", (ev) => { ev.preventDefault(); rollExpr($("#dice-expr").value); });
+
+  /* ---------- Start ---------- */
+  applyTheme();
+  if (state.prefs.wake) setWake(true);
+  showView(state.prefs.view || "combat");
+  state.selectedId = state.combat.activeId;
+  renderCombat();
+  renderLibrary();
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+})();

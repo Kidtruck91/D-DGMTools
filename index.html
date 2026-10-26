@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GM Tools</title>
+<meta name="description" content="D&amp;D combat tracker, monster library and dice roller for the game table.">
+<meta name="theme-color" content="#15232A">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">GM Tools</span>
+  <nav class="tabs" aria-label="Sections">
+    <button class="tab" data-view="combat" aria-current="page">Combat</button>
+    <button class="tab" data-view="monsters">Monsters</button>
+    <button class="tab" data-view="dice">Dice</button>
+  </nav>
+  <div class="topbar-tools">
+    <button class="icon-btn" id="wake-btn" aria-pressed="false" title="Keep the screen on during play">Screen stays on: off</button>
+    <button class="icon-btn" id="theme-btn" title="Switch between light and dark">Light</button>
+  </div>
+</header>
+
+<main>
+  <!-- COMBAT -->
+  <section id="view-combat" class="view" aria-label="Combat">
+    <div class="turnbar">
+      <div class="round">
+        <span class="round-label">Round</span>
+        <span class="round-num" id="round-num">1</span>
+      </div>
+      <p class="turn-who" id="turn-who">Add combatants, then start the first turn.</p>
+      <div class="turn-controls">
+        <button class="btn ghost" id="prev-turn">Back</button>
+        <button class="btn primary big" id="next-turn">Start combat</button>
+      </div>
+    </div>
+
+    <div class="combat-grid">
+      <div class="order-col">
+        <div class="toolbar">
+          <button class="btn" id="add-from-library">Add monsters</button>
+          <button class="btn" id="add-creature">Add creature</button>
+          <button class="btn" id="add-event">Add event</button>
+          <details class="menu">
+            <summary class="btn ghost">More</summary>
+            <div class="menu-pop">
+              <button class="btn ghost" id="save-combat">Save combat to file</button>
+              <button class="btn ghost" id="load-combat">Load combat from file</button>
+              <button class="btn ghost danger-text" id="new-combat">Clear combat</button>
+            </div>
+          </details>
+        </div>
+        <ol class="order" id="order" aria-label="Initiative order"></ol>
+      </div>
+
+      <aside class="detail" id="detail" aria-live="polite"></aside>
+    </div>
+  </section>
+
+  <!-- MONSTERS -->
+  <section id="view-monsters" class="view" aria-label="Monsters" hidden>
+    <div class="subtabs" role="tablist">
+      <button class="subtab" role="tab" data-sub="library" aria-selected="true">My monsters</button>
+      <button class="subtab" role="tab" data-sub="open5e" aria-selected="false">Find on Open5e</button>
+    </div>
+
+    <div id="sub-library" class="sub">
+      <div class="toolbar wrap">
+        <input type="search" id="lib-search" placeholder="Search your monsters" aria-label="Search your monsters">
+        <select id="lib-source" aria-label="Filter by source"></select>
+        <button class="btn primary" id="paste-statblock">Paste stat block</button>
+        <button class="btn" id="new-monster">New monster</button>
+        <details class="menu">
+          <summary class="btn ghost">File</summary>
+          <div class="menu-pop">
+            <button class="btn ghost" id="import-lib">Import monsters from file</button>
+            <button class="btn ghost" id="export-lib">Export monsters to file</button>
+          </div>
+        </details>
+      </div>
+      <p class="hint" id="lib-count"></p>
+      <ul class="monster-list" id="lib-list"></ul>
+    </div>
+
+    <div id="sub-open5e" class="sub" hidden>
+      <form class="toolbar wrap" id="o5-form">
+        <select id="o5-source" aria-label="Source book"><option value="">All sources</option></select>
+        <input type="search" id="o5-search" placeholder="Monster name (leave blank to browse)" aria-label="Monster name">
+        <button class="btn primary" type="submit">Search</button>
+      </form>
+      <p class="hint" id="o5-status">Open5e has free SRD and third-party monsters. Official books like Ghosts of Saltmarsh aren't there; use Paste stat block for those.</p>
+      <ul class="monster-list" id="o5-list"></ul>
+      <button class="btn" id="o5-more" hidden>Load more</button>
+    </div>
+  </section>
+
+  <!-- DICE -->
+  <section id="view-dice" class="view" aria-label="Dice" hidden>
+    <div class="dice-wrap">
+      <output class="dice-result" id="dice-result" aria-live="polite">
+        <span class="dice-total">—</span>
+        <span class="dice-detail">Tap a die or enter an expression</span>
+      </output>
+      <div class="dice-quick" id="dice-quick"></div>
+      <div class="dice-adv">
+        <button class="btn" data-d20="adv">d20 with advantage</button>
+        <button class="btn" data-d20="dis">d20 with disadvantage</button>
+      </div>
+      <form class="toolbar" id="dice-form">
+        <input id="dice-expr" value="2d6+3" aria-label="Dice expression" autocomplete="off">
+        <button class="btn primary" type="submit">Roll</button>
+      </form>
+      <ol class="dice-history" id="dice-history" aria-label="Roll history"></ol>
+    </div>
+  </section>
+</main>
+
+<!-- Creature / monster editor -->
+<dialog id="creature-dialog" class="sheet">
+  <form method="dialog" id="creature-form">
+    <h2 id="creature-title">Creature</h2>
+    <div class="grid-2">
+      <label class="span-2">Name<input name="name" required></label>
+      <label data-combat-only>Initiative
+        <span class="inline"><input name="initiative" inputmode="numeric"><button type="button" class="btn small" id="roll-init">Roll</button></span>
+      </label>
+      <label>Initiative bonus<input name="initiative_bonus" inputmode="numeric" placeholder="0"></label>
+      <label>HP<input name="hp" inputmode="numeric" placeholder="Not tracked"></label>
+      <label>Max HP<input name="max_hp" inputmode="numeric" placeholder="Same as HP"></label>
+      <label>AC<input name="ac" inputmode="numeric"></label>
+      <label>Source<input name="source" list="source-options" placeholder="e.g. Ghosts of Saltmarsh"></label>
+      <label class="span-2">Traits and other abilities<textarea name="traits" rows="4"></textarea></label>
+      <label class="check span-2"><input type="checkbox" name="ma"> Multiattack: one button rolls each attack its multiattack count</label>
+    </div>
+    <h3>Attacks and actions</h3>
+    <p class="hint">Leave the attack bonus blank for saving-throw or special actions. Set multiattack uses to 0 for attacks that aren't part of the multiattack.</p>
+    <div id="attack-rows"></div>
+    <button type="button" class="btn" id="add-attack-row">Add attack</button>
+    <p class="form-error" id="creature-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" value="cancel" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="creature-save" value="save">Save</button>
+    </div>
+  </form>
+</dialog>
+<datalist id="source-options"></datalist>
+
+<!-- Event editor -->
+<dialog id="event-dialog" class="sheet narrow">
+  <form method="dialog" id="event-form">
+    <h2>Event</h2>
+    <p class="hint">Lair actions, rising tides, reinforcements — anything that happens on an initiative count.</p>
+    <label>Name<input name="name" required placeholder="Lair action"></label>
+    <label>Initiative<input name="initiative" inputmode="numeric" value="20"></label>
+    <label>What happens<textarea name="description" rows="4"></textarea></label>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save event</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Paste stat block -->
+<dialog id="paste-dialog" class="sheet">
+  <form method="dialog" id="paste-form">
+    <h2>Paste a stat block</h2>
+    <p class="hint">On D&amp;D Beyond, open the monster's page, select from its name to the end of its actions, copy, and paste it here. Book PDFs and other sites work too.</p>
+    <label>Stat block<textarea name="text" rows="12" required placeholder="Sahuagin&#10;Medium humanoid (sahuagin), lawful evil&#10;Armor Class 12 (natural armor)&#10;Hit Points 22 (4d8 + 4)&#10;…"></textarea></label>
+    <label>Source book<input name="source" list="source-options" placeholder="Used when the stat block doesn't say"></label>
+    <p class="form-error" id="paste-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Read stat block</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Add monsters from library -->
+<dialog id="add-dialog" class="sheet">
+  <form method="dialog" id="add-form">
+    <h2>Add monsters to combat</h2>
+    <div class="toolbar wrap">
+      <input type="search" id="add-search" placeholder="Search your monsters" aria-label="Search your monsters">
+      <select id="add-source" aria-label="Filter by source"></select>
+    </div>
+    <ul class="pick-list" id="add-list"></ul>
+    <fieldset id="add-options" disabled>
+      <legend id="add-chosen">Choose a monster above</legend>
+      <div class="grid-2">
+        <label>How many<input name="count" type="number" min="1" max="20" value="1" inputmode="numeric"></label>
+        <label>Name<input name="name"></label>
+        <label class="span-2">Initiative
+          <select name="initMode">
+            <option value="each">Roll for each one</option>
+            <option value="group">Roll once for the group</option>
+            <option value="fixed">Use a number I enter</option>
+          </select>
+        </label>
+        <label data-fixed hidden>Initiative value<input name="initValue" inputmode="numeric"></label>
+      </div>
+    </fieldset>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary" id="add-confirm" disabled>Add to combat</button>
+    </div>
+  </form>
+</dialog>
+
+<input type="file" id="file-input" accept="application/json,.json" hidden>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="parser.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
