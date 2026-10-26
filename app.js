@@ -715,12 +715,15 @@
     btn.disabled = n === 0;
   }
   $("#bulk-list").addEventListener("change", updateBulkButton);
+  $("#bulk-all").addEventListener("click", () => { $$("[data-bulk]").forEach((b) => { b.checked = true; }); updateBulkButton(); });
+  $("#bulk-none").addEventListener("click", () => { $$("[data-bulk]").forEach((b) => { b.checked = false; }); updateBulkButton(); });
   $("#bulk-form").addEventListener("submit", (ev) => {
     ev.preventDefault();
     const chosen = $$("[data-bulk]:checked").map((b) => bulkItems[+b.dataset.bulk]);
     chosen.forEach((m) => state.monsters.push(Object.assign({ id: uid() }, m)));
     saveMonsters();
     renderLibrary();
+    refreshOpen5eButtons();
     $("#bulk-dialog").close();
     toast("Saved " + chosen.length + " monster" + (chosen.length === 1 ? "" : "s") + " to your library.");
   });
@@ -835,11 +838,18 @@
       else $("#o5-list").innerHTML = html || '<li class="empty">No monsters found. Try a shorter name or another source.</li>';
       o5Next = data.next || null;
       $("#o5-more").hidden = !o5Next;
-      status.textContent = (data.count != null ? data.count + " monsters found" : results.length + " shown") + (o5Next ? ". Scroll down for more." : ".");
+      if (!append) o5Count = data.count != null ? data.count : results.length;
+      const allBtn = $("#o5-all");
+      allBtn.hidden = !o5Count;
+      allBtn.textContent = o5Count === 1 ? "Save this result" : "Save all " + o5Count + " results";
+      status.textContent = (data.count != null ? data.count + " monsters found" : results.length + " shown") + (o5Next ? ". Load more at the bottom of the list." : ".");
     } catch (e) {
       status.textContent = "Couldn't reach Open5e. Check your internet connection and try again.";
     }
   }
+  const O5_BULK_MAX = 600;
+  let o5Params = null;
+  let o5Count = 0;
   $("#o5-form").addEventListener("submit", (ev) => {
     ev.preventDefault();
     const p = new URLSearchParams({ limit: "50", ordering: "name" });
@@ -847,8 +857,45 @@
     const src = $("#o5-source").value;
     if (q) p.set("search", q);
     if (src) p.set("document__slug", src);
+    o5Params = p;
     searchOpen5e(OPEN5E + "/monsters/?" + p.toString(), false);
   });
+  // Fetch every page of the current search, then show the review checklist.
+  $("#o5-all").addEventListener("click", async () => {
+    if (!o5Params) return;
+    if (o5Count > O5_BULK_MAX) {
+      toast("That's " + o5Count + " monsters. Pick a source book or add a name to get under " + O5_BULK_MAX + ".");
+      return;
+    }
+    const btn = $("#o5-all");
+    const status = $("#o5-status");
+    const p = new URLSearchParams(o5Params);
+    p.set("limit", "100");
+    let url = OPEN5E + "/monsters/?" + p.toString();
+    const records = [];
+    btn.disabled = true;
+    try {
+      while (url && records.length < O5_BULK_MAX) {
+        status.textContent = "Downloading monsters… " + records.length + " of " + o5Count;
+        const data = await getJSON(url);
+        (data.results || []).forEach((r) => { o5Cache.set(r.slug, r); records.push(r); });
+        url = data.next ? data.next.replace(/^http:/, "https:") : null;
+      }
+      status.textContent = "Downloaded " + records.length + " monsters. Review them, then save.";
+      openBulkReview(records.map((r) => GM.fromOpen5e(r)));
+    } catch (e) {
+      status.textContent = "Open5e stopped answering after " + records.length + " monsters. Check your connection and try again.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  function refreshOpen5eButtons() {
+    const have = new Set(state.monsters.map(monsterKey));
+    $$('#o5-list [data-o5="save"]').forEach((b) => {
+      const rec = o5Cache.get(b.dataset.slug);
+      if (rec && have.has(monsterKey({ name: rec.name, source: rec.document__title }))) { b.disabled = true; b.textContent = "In your monsters"; }
+    });
+  }
   $("#o5-more").addEventListener("click", () => { if (o5Next) searchOpen5e(o5Next.replace(/^http:/, "https:"), true); });
   $("#o5-list").addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-o5]");

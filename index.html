@@ -93,6 +93,9 @@
         <input type="search" id="o5-search" placeholder="Monster name (leave blank to browse)" aria-label="Monster name">
         <button class="btn primary" type="submit">Search</button>
       </form>
+      <div class="toolbar wrap">
+        <button class="btn" type="button" id="o5-all" hidden>Save all results</button>
+      </div>
       <p class="hint" id="o5-status">Open5e has free SRD and third-party monsters. Official books like Ghosts of Saltmarsh aren't there; use Paste stat block for those.</p>
       <ul class="monster-list" id="o5-list"></ul>
       <button class="btn" id="o5-more" hidden>Load more</button>
@@ -185,6 +188,10 @@
   <form method="dialog" id="bulk-form">
     <h2 id="bulk-title">Review monsters</h2>
     <p class="hint">Uncheck any you don't want. Monsters with a warning are worth a look after saving; tap Edit on them in your library.</p>
+    <div class="toolbar">
+      <button type="button" class="btn small" id="bulk-all">Select all</button>
+      <button type="button" class="btn small ghost" id="bulk-none">Select none</button>
+    </div>
     <ul class="bulk-list" id="bulk-list"></ul>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" data-close>Cancel</button>

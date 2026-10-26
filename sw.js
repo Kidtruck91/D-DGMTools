@@ -1,5 +1,5 @@
 // Offline support: the app shell is cached; Open5e requests always go to the network.
-const CACHE = "gmtools-v2";
+const CACHE = "gmtools-v3";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "parser.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
