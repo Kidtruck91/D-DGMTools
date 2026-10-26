@@ -66,7 +66,7 @@
   <section id="view-monsters" class="view" aria-label="Monsters" hidden>
     <div class="subtabs" role="tablist">
       <button class="subtab" role="tab" data-sub="library" aria-selected="true">My monsters</button>
-      <button class="subtab" role="tab" data-sub="open5e" aria-selected="false">Find on Open5e</button>
+      <button class="subtab" role="tab" data-sub="bestiary" aria-selected="false">Bestiary</button>
     </div>
 
     <div id="sub-library" class="sub">
@@ -87,18 +87,16 @@
       <ul class="monster-list" id="lib-list"></ul>
     </div>
 
-    <div id="sub-open5e" class="sub" hidden>
-      <form class="toolbar wrap" id="o5-form">
-        <select id="o5-source" aria-label="Source book"><option value="">All sources</option></select>
-        <input type="search" id="o5-search" placeholder="Monster name (leave blank to browse)" aria-label="Monster name">
-        <button class="btn primary" type="submit">Search</button>
-      </form>
+    <div id="sub-bestiary" class="sub" hidden>
       <div class="toolbar wrap">
-        <button class="btn" type="button" id="o5-all" hidden>Save all results</button>
+        <input type="search" id="best-search" placeholder="Search 3,000+ monsters" aria-label="Search the bestiary">
+        <select id="best-source" aria-label="Filter by source"><option value="">All sources</option></select>
+        <select id="best-cr" aria-label="Filter by challenge rating"><option value="">Any CR</option></select>
       </div>
-      <p class="hint" id="o5-status">Open5e has free SRD and third-party monsters. Official books like Ghosts of Saltmarsh aren't there; use Paste stat block for those.</p>
-      <ul class="monster-list" id="o5-list"></ul>
-      <button class="btn" id="o5-more" hidden>Load more</button>
+      <p class="hint" id="best-status">Loading the bestiary…</p>
+      <ul class="monster-list" id="best-list"></ul>
+      <button class="btn" id="best-more" hidden>Show more</button>
+      <p class="hint">Free monsters from the 5e SRD and third-party books, via <a href="https://open5e.com" target="_blank" rel="noopener">Open5e</a>, built in and available offline. Official books like Ghosts of Saltmarsh aren't included; use Paste stat blocks for those. <a href="data/OPEN5E-LICENSES.md" target="_blank" rel="noopener">Sources and licenses</a></p>
     </div>
   </section>
 
@@ -205,7 +203,7 @@
   <form method="dialog" id="add-form">
     <h2>Add monsters to combat</h2>
     <div class="toolbar wrap">
-      <input type="search" id="add-search" placeholder="Search your monsters" aria-label="Search your monsters">
+      <input type="search" id="add-search" placeholder="Search your monsters and the bestiary" aria-label="Search monsters">
       <select id="add-source" aria-label="Filter by source"></select>
     </div>
     <ul class="pick-list" id="add-list"></ul>

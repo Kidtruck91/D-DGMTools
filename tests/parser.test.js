@@ -148,6 +148,17 @@ test("Open5e record mapping", () => {
   assert.ok(/Nimble Escape/.test(m.traits));
 });
 
+test("unnamed multiattack counts the one weapon, never spells", () => {
+  const attacks = [
+    GM.parseAction("Mace", "Melee Weapon Attack: +4 to hit. Hit: 5 (1d6 + 2) bludgeoning damage."),
+    GM.parseAction("Flame Strike (5th-Level; V, S, M)", "Each creature in a 10-foot-radius must make a DC 17 Dexterity saving throw, taking 14 (4d6) fire damage on a failed save."),
+  ];
+  GM.applyMultiattack("The archpriest attacks twice.", attacks);
+  assert.deepStrictEqual(attacks.map((a) => a.count), [2, 0]);
+  GM.applyMultiattack("The archpriest attacks four times.", attacks);
+  assert.deepStrictEqual(attacks.map((a) => a.count), [4, 0]);
+});
+
 test("splits several pasted stat blocks", () => {
   const blocks = GM.splitStatBlocks(classic + "\n\n" + ddbLayout + "\n\n" + modern);
   assert.strictEqual(blocks.length, 3);

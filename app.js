@@ -1,10 +1,9 @@
-/* GM Tools — combat tracker, monster library, Open5e browser and dice roller. */
+/* GM Tools — combat tracker, monster library, built-in bestiary and dice roller. */
 (function () {
   "use strict";
   const GM = window.GM;
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
-  const OPEN5E = "https://api.open5e.com/v1";
   const CONDITIONS = ["Blinded", "Charmed", "Concentrating", "Deafened", "Frightened", "Grappled", "Incapacitated", "Invisible", "Paralyzed", "Petrified", "Poisoned", "Prone", "Restrained", "Stunned", "Unconscious"];
 
   /* ---------- Storage ---------- */
@@ -258,6 +257,7 @@
     for (const attack of entity.attacks || []) {
       const times = Math.max(0, Math.min(20, attack.count == null ? 1 : attack.count));
       for (let i = 0; i < times; i++) {
+        if (attack.bonus == null && !attack.damage) { lines.push("uses " + attack.name); continue; }
         let line = attack.name + ": ";
         if (attack.bonus != null) {
           const d = GM.rollD20();
@@ -610,7 +610,7 @@
           '<div class="mon-actions"><button class="btn small primary" data-lib="add" data-id="' + m.id + '">Add to combat</button><button class="btn small" data-lib="edit" data-id="' + m.id + '">Edit</button><button class="btn small ghost" data-lib="copy" data-id="' + m.id + '">Duplicate</button><button class="btn small ghost danger-text" data-lib="delete" data-id="' + m.id + '">Delete</button></div></li>').join("")
       : state.monsters.length
         ? '<li class="empty">No monsters match. Clear the search or pick another source.</li>'
-        : '<li class="empty">Your library is empty. Paste a stat block from D&amp;D Beyond, find one on Open5e, or import the saltmarsh_monsters.json file from the old tracker with File → Import.</li>';
+        : '<li class="empty">Your library is empty. Paste a stat block from D&amp;D Beyond, copy one from the Bestiary, or import the saltmarsh_monsters.json file from the old tracker with File → Import.</li>';
   }
   $("#lib-search").addEventListener("input", renderLibrary);
   $("#lib-source").addEventListener("change", () => { state.prefs.libSource = $("#lib-source").value; savePrefs(); renderLibrary(); });
@@ -723,7 +723,6 @@
     chosen.forEach((m) => state.monsters.push(Object.assign({ id: uid() }, m)));
     saveMonsters();
     renderLibrary();
-    refreshOpen5eButtons();
     $("#bulk-dialog").close();
     toast("Saved " + chosen.length + " monster" + (chosen.length === 1 ? "" : "s") + " to your library.");
   });
@@ -738,18 +737,30 @@
     $("#add-confirm").disabled = true;
     $("#add-chosen").textContent = "Choose a monster above";
     $("[data-fixed]", form).hidden = true;
-    fillSourceSelect($("#add-source"), refreshSourceOptions(), state.prefs.libSource || "");
+    const fillSources = () => fillSourceSelect($("#add-source"), Array.from(new Set(refreshSourceOptions().concat(bestiarySources()))), $("#add-source").value || state.prefs.libSource || "");
+    fillSources();
     renderAddList();
     $("#add-dialog").showModal();
+    if (!bestiary) loadBestiary().then(() => { fillSources(); renderAddList(); }).catch(() => {});
   }
+  const ADD_LIMIT = 80;
   function renderAddList() {
-    const list = filterMonsters($("#add-search").value, $("#add-source").value);
-    $("#add-list").innerHTML = list.length
-      ? list.map((m) => '<li><button type="button" data-pick="' + m.id + '" aria-pressed="' + (addChoice && addChoice.id === m.id) + '"><span>' + esc(m.name) + '</span><span class="meta">' + esc(monsterMeta(m)) + "</span></button></li>").join("")
-      : '<li class="empty" style="padding:12px">' + (state.monsters.length ? "No monsters match." : "Your library is empty. Add monsters on the Monsters tab first.") + "</li>";
+    const q = $("#add-search").value;
+    const src = $("#add-source").value;
+    const mine = filterMonsters(q, src);
+    const built = src === "__none" ? [] : filterBestiary(q, src, "");
+    const all = mine.map((m) => ({ id: m.id, name: m.name, meta: monsterMeta(m) }))
+      .concat(built.map((m) => ({ id: m.id, name: m.name, meta: bestiaryMeta(m) })));
+    const shown = all.slice(0, ADD_LIMIT);
+    $("#add-list").innerHTML = shown.length
+      ? shown.map((m) => '<li><button type="button" data-pick="' + esc(m.id) + '" aria-pressed="' + !!(addChoice && addChoice.id === m.id) + '"><span>' + esc(m.name) + '</span><span class="meta">' + esc(m.meta) + "</span></button></li>").join("") +
+        (all.length > ADD_LIMIT ? '<li class="empty" style="padding:12px">' + (all.length - ADD_LIMIT) + " more. Type a name or pick a source to narrow the list.</li>" : "")
+      : '<li class="empty" style="padding:12px">No monsters match.</li>';
   }
   function chooseForAdd(id) {
-    addChoice = state.monsters.find((m) => m.id === id) || null;
+    const mine = state.monsters.find((m) => m.id === id);
+    const built = !mine && bestiary ? bestiary.monsters.find((m) => m.id === id) : null;
+    addChoice = mine || (built ? fullMonster(built) : null);
     if (!addChoice) return;
     const form = $("#add-form");
     form.name.value = addChoice.name;
@@ -795,121 +806,92 @@
     toast(count > 1 ? "Added " + count + " × " + base + "." : base + " added.");
   });
 
-  /* ---------- Open5e ---------- */
-  let o5Next = null;
-  let o5Docs = null;
-  const o5Cache = new Map();
+  /* ---------- Bestiary: Open5e monsters bundled with the app ---------- */
+  let bestiary = null;
+  let bestiaryLoading = null;
+  let bestShown = 60;
+  function loadBestiary() {
+    if (bestiaryLoading) return bestiaryLoading;
+    bestiaryLoading = fetch("data/open5e-monsters.json")
+      .then((r) => { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+      .then((data) => {
+        data.monsters.forEach((m) => { m._search = m.name.toLowerCase(); });
+        bestiary = data;
+        fillBestiaryFilters();
+        return data;
+      })
+      .catch((e) => { bestiaryLoading = null; throw e; });
+    return bestiaryLoading;
+  }
+  // Bundled entries leave out empty fields to stay small; fill them back in before use.
+  function fullMonster(m) {
+    const c = clone(m);
+    delete c._search;
+    const out = Object.assign({ kind: "creature", initiative_bonus: 0, hp: null, ac: null, traits: "", ma: false, source: "" }, c);
+    out.max_hp = out.max_hp != null ? out.max_hp : out.hp;
+    out.attacks = (c.attacks || []).map((a) => Object.assign({ name: "", bonus: null, damage: "", count: 1, description: "" }, a));
+    return out;
+  }
+  const crNumber = (cr) => { const t = String(cr); if (t.includes("/")) { const [a, b] = t.split("/"); return a / b; } return parseFloat(t) || 0; };
+  function bestiarySources() { return bestiary ? bestiary.sources.map((s) => s.title) : []; }
+  function fillBestiaryFilters() {
+    $("#best-source").innerHTML = '<option value="">All sources</option>' + bestiary.sources.map((s) => '<option value="' + esc(s.title) + '">' + esc(s.title) + " (" + s.count + ")</option>").join("");
+    const crs = Array.from(new Set(bestiary.monsters.map((m) => m.cr).filter((c) => c !== undefined && c !== ""))).sort((a, b) => crNumber(a) - crNumber(b));
+    $("#best-cr").innerHTML = '<option value="">Any CR</option>' + crs.map((c) => '<option value="' + esc(c) + '">CR ' + esc(c) + "</option>").join("");
+  }
+  function filterBestiary(query, source, cr) {
+    if (!bestiary) return [];
+    const q = String(query || "").trim().toLowerCase();
+    return bestiary.monsters.filter((m) => (!q || m._search.includes(q)) && (!source || m.source === source) && (!cr || m.cr === cr));
+  }
+  function bestiaryMeta(m) {
+    return [m.source, m.type, m.cr !== undefined && m.cr !== "" ? "CR " + m.cr : null, m.hp != null ? "HP " + m.hp : null, m.ac != null ? "AC " + m.ac : null].filter(Boolean).join(" · ");
+  }
+  function renderBestiary() {
+    if (!bestiary) {
+      $("#best-status").textContent = "Loading the bestiary…";
+      loadBestiary().then(renderBestiary).catch(() => { $("#best-status").textContent = "Couldn't load the bestiary. Open the app once while online so it can be saved for offline use."; });
+      return;
+    }
+    const list = filterBestiary($("#best-search").value, $("#best-source").value, $("#best-cr").value);
+    const have = new Set(state.monsters.map(monsterKey));
+    $("#best-status").textContent = list.length === bestiary.monsters.length ? list.length + " monsters" : list.length + " of " + bestiary.monsters.length + " monsters";
+    $("#best-list").innerHTML = list.length
+      ? list.slice(0, bestShown).map((m) => {
+          const copied = have.has(monsterKey(m));
+          return '<li class="mon"><div><div class="mon-name">' + esc(m.name) + '</div><div class="mon-meta">' + esc(bestiaryMeta(m)) + "</div></div>" +
+            '<div class="mon-actions"><button class="btn small primary" data-best="add" data-id="' + esc(m.id) + '">Add to combat</button>' +
+            '<button class="btn small" data-best="copy" data-id="' + esc(m.id) + '"' + (copied ? " disabled" : "") + ">" + (copied ? "In my monsters" : "Copy to my monsters") + "</button></div></li>";
+        }).join("")
+      : '<li class="empty">No monsters match. Try a shorter name, another source or Any CR.</li>';
+    $("#best-more").hidden = list.length <= bestShown;
+  }
+  const resetBestiary = () => { bestShown = 60; renderBestiary(); };
+  $("#best-search").addEventListener("input", resetBestiary);
+  $("#best-source").addEventListener("change", resetBestiary);
+  $("#best-cr").addEventListener("change", resetBestiary);
+  $("#best-more").addEventListener("click", () => { bestShown += 120; renderBestiary(); });
+  $("#best-list").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-best]");
+    if (!b) return;
+    const entry = bestiary && bestiary.monsters.find((m) => m.id === b.dataset.id);
+    if (!entry) return;
+    if (b.dataset.best === "add") { openAddDialog(); chooseForAdd(entry.id); return; }
+    const m = fullMonster(entry);
+    m.id = uid();
+    state.monsters.push(m);
+    saveMonsters();
+    b.disabled = true;
+    b.textContent = "In my monsters";
+    toast(m.name + " copied to your monsters. Edit it there to make changes.");
+  });
   $$(".subtab").forEach((t) => t.addEventListener("click", () => {
     $$(".subtab").forEach((x) => x.setAttribute("aria-selected", String(x === t)));
     $("#sub-library").hidden = t.dataset.sub !== "library";
-    $("#sub-open5e").hidden = t.dataset.sub !== "open5e";
-    if (t.dataset.sub === "open5e") loadOpen5eSources();
+    $("#sub-bestiary").hidden = t.dataset.sub !== "bestiary";
+    if (t.dataset.sub === "bestiary") renderBestiary();
+    else renderLibrary();
   }));
-  async function getJSON(url) {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error("Open5e answered with error " + res.status + ".");
-    return res.json();
-  }
-  async function loadOpen5eSources() {
-    if (o5Docs) return;
-    try {
-      const data = await getJSON(OPEN5E + "/documents/?limit=100");
-      o5Docs = (data.results || []).filter((d) => d.slug).sort((a, b) => a.title.localeCompare(b.title));
-      $("#o5-source").innerHTML = '<option value="">All sources</option>' + o5Docs.map((d) => '<option value="' + esc(d.slug) + '">' + esc(d.title) + "</option>").join("");
-    } catch (e) {
-      $("#o5-status").textContent = "Couldn't reach Open5e. Check your internet connection, then reopen this tab.";
-    }
-  }
-  async function searchOpen5e(url, append) {
-    const status = $("#o5-status");
-    status.textContent = "Searching Open5e…";
-    $("#o5-more").hidden = true;
-    try {
-      const data = await getJSON(url);
-      const results = data.results || [];
-      results.forEach((r) => o5Cache.set(r.slug, r));
-      const html = results.map((r) => {
-        const meta = [r.document__title, r.size && r.type ? r.size + " " + r.type : r.type, r.challenge_rating != null ? "CR " + r.challenge_rating : null, r.hit_points != null ? "HP " + r.hit_points : null, r.armor_class != null ? "AC " + r.armor_class : null].filter(Boolean).join(" · ");
-        const have = state.monsters.some((m) => m.name.toLowerCase() === String(r.name).toLowerCase() && m.source === r.document__title);
-        return '<li class="mon"><div><div class="mon-name">' + esc(r.name) + '</div><div class="mon-meta">' + esc(meta) + "</div></div>" +
-          '<div class="mon-actions"><button class="btn small primary" data-o5="save" data-slug="' + esc(r.slug) + '"' + (have ? " disabled" : "") + ">" + (have ? "In your monsters" : "Save to my monsters") + '</button><button class="btn small" data-o5="review" data-slug="' + esc(r.slug) + '">Review first</button></div></li>';
-      }).join("");
-      if (append) $("#o5-list").insertAdjacentHTML("beforeend", html);
-      else $("#o5-list").innerHTML = html || '<li class="empty">No monsters found. Try a shorter name or another source.</li>';
-      o5Next = data.next || null;
-      $("#o5-more").hidden = !o5Next;
-      if (!append) o5Count = data.count != null ? data.count : results.length;
-      const allBtn = $("#o5-all");
-      allBtn.hidden = !o5Count;
-      allBtn.textContent = o5Count === 1 ? "Save this result" : "Save all " + o5Count + " results";
-      status.textContent = (data.count != null ? data.count + " monsters found" : results.length + " shown") + (o5Next ? ". Load more at the bottom of the list." : ".");
-    } catch (e) {
-      status.textContent = "Couldn't reach Open5e. Check your internet connection and try again.";
-    }
-  }
-  const O5_BULK_MAX = 600;
-  let o5Params = null;
-  let o5Count = 0;
-  $("#o5-form").addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    const p = new URLSearchParams({ limit: "50", ordering: "name" });
-    const q = $("#o5-search").value.trim();
-    const src = $("#o5-source").value;
-    if (q) p.set("search", q);
-    if (src) p.set("document__slug", src);
-    o5Params = p;
-    searchOpen5e(OPEN5E + "/monsters/?" + p.toString(), false);
-  });
-  // Fetch every page of the current search, then show the review checklist.
-  $("#o5-all").addEventListener("click", async () => {
-    if (!o5Params) return;
-    if (o5Count > O5_BULK_MAX) {
-      toast("That's " + o5Count + " monsters. Pick a source book or add a name to get under " + O5_BULK_MAX + ".");
-      return;
-    }
-    const btn = $("#o5-all");
-    const status = $("#o5-status");
-    const p = new URLSearchParams(o5Params);
-    p.set("limit", "100");
-    let url = OPEN5E + "/monsters/?" + p.toString();
-    const records = [];
-    btn.disabled = true;
-    try {
-      while (url && records.length < O5_BULK_MAX) {
-        status.textContent = "Downloading monsters… " + records.length + " of " + o5Count;
-        const data = await getJSON(url);
-        (data.results || []).forEach((r) => { o5Cache.set(r.slug, r); records.push(r); });
-        url = data.next ? data.next.replace(/^http:/, "https:") : null;
-      }
-      status.textContent = "Downloaded " + records.length + " monsters. Review them, then save.";
-      openBulkReview(records.map((r) => GM.fromOpen5e(r)));
-    } catch (e) {
-      status.textContent = "Open5e stopped answering after " + records.length + " monsters. Check your connection and try again.";
-    } finally {
-      btn.disabled = false;
-    }
-  });
-  function refreshOpen5eButtons() {
-    const have = new Set(state.monsters.map(monsterKey));
-    $$('#o5-list [data-o5="save"]').forEach((b) => {
-      const rec = o5Cache.get(b.dataset.slug);
-      if (rec && have.has(monsterKey({ name: rec.name, source: rec.document__title }))) { b.disabled = true; b.textContent = "In your monsters"; }
-    });
-  }
-  $("#o5-more").addEventListener("click", () => { if (o5Next) searchOpen5e(o5Next.replace(/^http:/, "https:"), true); });
-  $("#o5-list").addEventListener("click", (ev) => {
-    const b = ev.target.closest("[data-o5]");
-    if (!b) return;
-    const rec = o5Cache.get(b.dataset.slug);
-    if (!rec) return;
-    const m = GM.fromOpen5e(rec);
-    if (b.dataset.o5 === "review") { openCreatureEditor({ mode: "library", item: m, fresh: true, title: "Check " + m.name }); return; }
-    state.monsters.push(Object.assign({ id: uid() }, m));
-    saveMonsters();
-    b.disabled = true;
-    b.textContent = "In your monsters";
-    toast(m.name + " saved to your monsters.");
-  });
 
   /* ---------- Dice ---------- */
   const diceHistory = [];

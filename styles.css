@@ -48,6 +48,7 @@ body {
 [hidden] { display: none !important; }
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 3px solid var(--tide); outline-offset: 2px; }
+a { color: var(--tide); }
 
 /* ---------- Top bar ---------- */
 .topbar {

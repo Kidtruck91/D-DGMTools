@@ -1,6 +1,6 @@
-// Offline support: the app shell is cached; Open5e requests always go to the network.
-const CACHE = "gmtools-v3";
-const SHELL = ["./", "index.html", "styles.css", "app.js", "parser.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
+// Offline support: the app and its bundled bestiary are cached for use without internet.
+const CACHE = "gmtools-v4";
+const SHELL = ["./", "index.html", "styles.css", "app.js", "parser.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "data/open5e-monsters.json"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));

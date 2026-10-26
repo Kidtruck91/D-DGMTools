@@ -23,7 +23,7 @@ Your monsters and the current combat are saved on the device automatically. Use 
 **Monsters**
 - **Paste stat blocks**: copy a monster from D&D Beyond (or a PDF or website) and paste it in. Name, AC, HP, initiative bonus, traits, attacks, damage and multiattack counts are filled in for you to check before saving. Handles both the 2014 and 2024 stat block styles.
 - **Bulk paste**: paste several stat blocks one after another in the same box. The app splits them apart and shows a checklist, flagging any that are missing HP, AC or attacks, or that you already have. A line of `---` between monsters forces a split if one is ever missed.
-- **Find on Open5e**: browse free SRD and third-party monsters by source book, or search by name, and save them to your library one at a time or with **Save all results** (up to 600 per batch), which downloads every match and shows the same review checklist.
+- **Bestiary**: all 3,207 monsters from [Open5e](https://open5e.com) (5e SRD, Tome of Beasts 1–3, Creature Codex, Black Flag, Level Up Monstrous Menagerie and more) are built in and work offline. Search by name, filter by source and CR, add straight to combat, or copy one to your monsters to customize it. The combat **Add monsters** picker searches the bestiary too. Sources and licenses are listed in `data/OPEN5E-LICENSES.md`.
 - Filter your library by source book (Ghosts of Saltmarsh, Basic Rules, homebrew…).
 - **File → Import** accepts `saltmarsh_monsters.json` from the old Python tracker.
 
@@ -40,3 +40,12 @@ D&D Beyond has no public API for stat blocks, and automated scraping is against 
 Plain HTML, CSS and JavaScript with no build step. Open `index.html` through any local web server (for example `python -m http.server`) to work on it.
 
 Run the parser tests with `node tests/parser.test.js`.
+
+To refresh the bestiary with the latest Open5e data:
+
+```
+git clone --depth 1 https://github.com/open5e/open5e-api
+node tools/build-open5e.js open5e-api/data
+```
+
+Then bump `CACHE` in `sw.js` so installed copies pick up the new file.

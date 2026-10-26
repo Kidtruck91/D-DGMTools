@@ -123,11 +123,14 @@
       attacks.forEach((a, i) => { a.count = Math.min(20, counts[i] || 0); });
       return;
     }
-    const overall = t.match(/makes\s+(\w+)\s+(?:\w+\s+){0,2}?attacks?/);
+    // No attack named: only attack rolls take part. "Makes two attacks", "attacks twice"
+    // and "attacks four times" set the total when there is one weapon to use.
+    const overall = t.match(/makes?\s+(\w+)\s+(?:[a-z]+\s+){0,2}?attacks?\b/) || t.match(/\battacks\s+(\w+)\s+times\b/) || t.match(/\battacks\s+(twice|thrice|once)\b/);
     const n = overall ? toInt(overall[1]) : null;
-    if (n && weaponAttacks.length === 1) {
-      attacks.forEach((a) => { a.count = a === weaponAttacks[0] ? Math.min(20, n) : 0; });
-    }
+    const rolled = attacks.filter((a) => a.bonus != null);
+    attacks.forEach((a) => {
+      a.count = a.bonus == null ? 0 : rolled.length === 1 && n ? Math.min(20, n) : 1;
+    });
   }
 
   /* ---------- D&D Beyond / book stat block text ---------- */
