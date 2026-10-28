@@ -318,24 +318,50 @@ label.check input { width: 22px; min-height: 22px; accent-color: var(--brass); }
 .attack-buttons { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: 6px; align-items: center; }
 .attack details { grid-column: 1 / -1; font-size: 0.9rem; color: var(--muted); }
 .attack summary { cursor: pointer; color: var(--tide); }
-.stats-hint { margin: -4px 0 8px; font-size: 0.85rem; }
+.abilities { display: flex; flex-direction: column; gap: 8px; }
+.abilities-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.abilities-title { color: var(--muted); font-size: 0.95rem; font-weight: 600; }
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.switch .track { position: relative; width: 40px; height: 22px; border-radius: 11px; background: var(--panel-2); border: 1px solid var(--line); transition: background 0.15s; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform 0.15s, background 0.15s; }
+.switch[aria-checked="true"] { color: var(--text); }
+.switch[aria-checked="true"] .track { background: var(--brass-glow); border-color: var(--brass); }
+.switch[aria-checked="true"] .knob { transform: translateX(18px); background: var(--brass); }
 .stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
 .stat {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-  padding: 8px 6px;
+  align-items: center;
+  gap: 1px;
+  min-height: 64px;
+  padding: 6px 4px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
-  text-align: center;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  touch-action: manipulation;
 }
-.stat-name { color: var(--muted); font-size: 0.85rem; font-weight: 600; }
-.stat-score { font-family: var(--serif); font-size: 1.4rem; font-weight: 600; line-height: 1.1; font-variant-numeric: lining-nums tabular-nums; }
-.stat .btn { padding: 0 4px; font-variant-numeric: tabular-nums; }
-.stat .btn.save { background: transparent; color: var(--muted); font-weight: 500; }
-.stat .btn.save.prof { color: var(--text); border-color: var(--brass); font-weight: 600; }
-.skills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.stat:active { transform: translateY(1px); }
+.stat.empty { background: transparent; cursor: default; opacity: 0.6; }
+.stat.prof { border-color: var(--brass); box-shadow: inset 0 0 0 1px var(--brass); }
+.stat-name { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
+.stat-score { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stat-bonus { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; line-height: 1.1; font-variant-numeric: lining-nums tabular-nums; }
+.stat.prof .stat-bonus { color: var(--brass); }
+.skills { display: flex; flex-wrap: wrap; gap: 6px; }
 .abilities-edit { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 .abilities-edit input { text-align: center; padding: 8px 4px; }
 .attack-row .alt { grid-column: 1 / 4; }
@@ -525,7 +551,9 @@ dialog legend { padding: 0 6px; font-weight: 600; }
   .order, .detail { overflow: visible; flex: none; }
   .log { max-height: none; }
   .vitals { grid-template-columns: 1fr; }
-  .stats, .abilities-edit { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .abilities-edit { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stats { gap: 4px; }
+  .stat-bonus { font-size: 1.15rem; }
   .attack-row .alt { grid-column: 1 / -1; }
   .attack { grid-template-columns: 1fr; }
   .attack-buttons { grid-row: auto; grid-column: 1; flex-wrap: wrap; }

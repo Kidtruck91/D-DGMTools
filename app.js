@@ -313,22 +313,24 @@
   let detailShownId = null;
   const ABILITY_NAMES = { str: "Strength", dex: "Dexterity", con: "Constitution", int: "Intelligence", wis: "Wisdom", cha: "Charisma" };
   const saveBonus = (e, k) => (e.saves && e.saves[k] != null ? e.saves[k] : e.abilities && e.abilities[k] != null ? GM.abilityMod(e.abilities[k]) : null);
+  // One compact row under the HP bar. The switch decides whether a tap rolls an ability check or a save.
   function statsHtml(e) {
     const hasAbilities = e.abilities && GM.ABILITIES.some((k) => e.abilities[k] != null);
     const saves = e.saves || {};
     const skills = Object.entries(e.skills || {});
     if (!hasAbilities && !Object.keys(saves).length && !skills.length) return "";
-    let html = '<div class="d-section"><h3>Abilities and saves</h3><p class="hint stats-hint">Tap to roll. Proficient saves are outlined.</p><div class="stats">';
+    const saveMode = !!state.prefs.saveMode;
+    let html = '<div class="abilities"><div class="abilities-head"><span class="abilities-title">Abilities</span>' +
+      '<button class="switch" data-act="save-mode" role="switch" aria-checked="' + saveMode + '"><span class="track" aria-hidden="true"><span class="knob"></span></span>Saving throws</button></div><div class="stats">';
     GM.ABILITIES.forEach((k) => {
       const score = e.abilities ? e.abilities[k] : null;
-      const save = saveBonus(e, k);
-      if (score == null && save == null) return;
-      const mod = score != null ? GM.abilityMod(score) : null;
-      html += '<div class="stat"><span class="stat-name" title="' + ABILITY_NAMES[k] + '">' + k.replace(/^./, (c) => c.toUpperCase()) + "</span>" +
-        '<span class="stat-score">' + (score != null ? score : "—") + "</span>" +
-        (mod != null ? '<button class="btn small" data-check="' + k + '" aria-label="' + ABILITY_NAMES[k] + " check " + signed(mod) + '">' + signed(mod) + "</button>" : "") +
-        (save != null ? '<button class="btn small save' + (saves[k] != null ? " prof" : "") + '" data-save="' + k + '" aria-label="' + ABILITY_NAMES[k] + " save " + signed(save) + '">Save ' + signed(save) + "</button>" : "") +
-        "</div>";
+      const bonus = saveMode ? saveBonus(e, k) : score != null ? GM.abilityMod(score) : null;
+      const prof = saveMode && saves[k] != null;
+      const name = k.replace(/^./, (c) => c.toUpperCase());
+      html += bonus == null
+        ? '<div class="stat empty"><span class="stat-name">' + name + '</span><span class="stat-score">' + (score != null ? score : "—") + '</span><span class="stat-bonus">—</span></div>'
+        : '<button class="stat' + (prof ? " prof" : "") + '" data-ab="' + k + '" aria-label="' + ABILITY_NAMES[k] + (saveMode ? " save " : " check ") + signed(bonus) + (prof ? ", proficient" : "") + '">' +
+          '<span class="stat-name">' + name + '</span><span class="stat-score">' + (score != null ? score : "—") + '</span><span class="stat-bonus">' + signed(bonus) + "</span></button>";
     });
     html += "</div>";
     if (skills.length) {
@@ -336,6 +338,7 @@
     }
     return html + "</div>";
   }
+
   function renderDetail() {
     const el = $("#detail");
     if (detailShownId !== state.selectedId) { el.scrollTop = 0; detailShownId = state.selectedId; }
@@ -377,7 +380,7 @@
       ? '<div class="d-section"><h3>Attacks and actions</h3>' + (e.multiattack ? '<p class="multi-text"><b>Multiattack.</b> ' + esc(e.multiattack) + "</p>" : "") + '<div class="attacks">' + attacks + "</div></div>"
       : "";
     const traits = e.traits ? '<div class="d-section"><h3>Traits</h3><div class="traits">' + esc(e.traits) + "</div></div>" : "";
-    el.innerHTML = head + vitals + lastHtml + attackSection + statsHtml(e) + conds + traits + logHtml;
+    el.innerHTML = head + vitals + statsHtml(e) + lastHtml + attackSection + conds + traits + logHtml;
   }
 
   // Combat events
@@ -410,8 +413,12 @@
       saveCombat();
       return renderCombat();
     }
-    if (t.dataset.check) { const k = t.dataset.check; return rollCheck(e, ABILITY_NAMES[k] + " check", GM.abilityMod(e.abilities[k])); }
-    if (t.dataset.save) { const k = t.dataset.save; return rollCheck(e, ABILITY_NAMES[k] + " save", saveBonus(e, k)); }
+    if (t.dataset.act === "save-mode") { state.prefs.saveMode = !state.prefs.saveMode; savePrefs(); return renderDetail(); }
+    if (t.dataset.ab) {
+      const k = t.dataset.ab;
+      if (state.prefs.saveMode) return rollCheck(e, ABILITY_NAMES[k] + " save", saveBonus(e, k));
+      return rollCheck(e, ABILITY_NAMES[k] + " check", GM.abilityMod(e.abilities[k]));
+    }
     if (t.dataset.skill) { const k = t.dataset.skill; return rollCheck(e, k.replace(/\b\w/g, (c) => c.toUpperCase()), e.skills[k]); }
     if (t.dataset.atk != null) {
       const a = e.attacks[+t.dataset.atk];

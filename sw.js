@@ -1,5 +1,5 @@
 // Offline support: the app and its bundled bestiary are cached for use without internet.
-const CACHE = "gmtools-v6";
+const CACHE = "gmtools-v7";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "parser.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "data/open5e-monsters.json"];
 
 self.addEventListener("install", (event) => {

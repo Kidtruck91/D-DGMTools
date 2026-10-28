@@ -17,7 +17,7 @@ Your monsters and the current combat are saved on the device automatically. Use 
 - Ties go to the higher initiative bonus; events (lair actions, tides, reinforcements) lose ties.
 - Damage, healing (capped at max HP) and temporary HP; condition tracking; a Concentration save reminder when a concentrating creature takes damage.
 - Attack, advantage/disadvantage, damage and critical damage rolls for every attack. A monster's multiattack rule is shown above its attacks, so you can tap through whichever mix it's using. Damage with a choice (one- or two-handed, full or half HP) rolls every option, e.g. `11 or 13 two-handed`.
-- Ability scores, saving throws and skills on every monster; tap one to roll a check or save. Proficient saves are outlined.
+- Ability scores sit right under the HP bar; tap one to roll it. The **Saving throws** switch flips the row between ability checks and saves (proficient saves are outlined in gold), and skills are tappable chips below.
 - Add several copies of a monster at once (Sahuagin 1, 2, 3…), each rolling initiative, sharing a group roll, or using a set number.
 - Save and load combats as files. Files saved by the old Python tracker still load.
 
