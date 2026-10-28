@@ -52,7 +52,7 @@ test("classic stat block: core numbers", () => {
   assert.strictEqual(m.attacks.length, 2);
   assert.deepStrictEqual([m.attacks[0].name, m.attacks[0].bonus, m.attacks[0].damage], ["Greatclub", 6, "2d8+4"]);
   assert.strictEqual(m.attacks[1].damage, "2d6+4");
-  assert.strictEqual(m.ma, false);
+  assert.strictEqual(m.multiattack, undefined);
 });
 
 const ddbLayout = `Owlbear
@@ -86,8 +86,9 @@ test("D&D Beyond copy layout: traits, multiattack, source", () => {
   const m = GM.parseStatBlock(ddbLayout);
   assert.strictEqual(m.name, "Owlbear");
   assert.strictEqual(m.initiative_bonus, 1);
-  assert.strictEqual(m.ma, true);
-  assert.deepStrictEqual(m.attacks.map((a) => [a.name, a.count]), [["Beak", 1], ["Claws", 1]]);
+  assert.strictEqual(m.multiattack, "The owlbear makes two attacks: one with its beak and one with its claws.");
+  assert.deepStrictEqual(m.attacks.map((a) => a.name), ["Beak", "Claws"]);
+  assert.ok(!/Multiattack/.test(m.traits));
   assert.ok(/Keen Sight and Smell/.test(m.traits));
   assert.strictEqual(m.source, "Basic Rules");
 });
@@ -112,7 +113,8 @@ test("2024 stat block format", () => {
   assert.strictEqual(m.ac, 15);
   assert.strictEqual(m.hp, 52);
   assert.strictEqual(m.initiative_bonus, 3);
-  assert.deepStrictEqual(m.attacks.map((a) => [a.name, a.bonus, a.damage, a.count]), [["Scimitar", 5, "1d6+3", 2], ["Pistol", 5, "1d10+3", 1]]);
+  assert.deepStrictEqual(m.attacks.map((a) => [a.name, a.bonus, a.damage]), [["Scimitar", 5, "1d6+3"], ["Pistol", 5, "1d10+3"]]);
+  assert.strictEqual(m.multiattack, "The bandit makes two Scimitar attacks and uses Pistol.");
   assert.ok(/Reactions:/.test(m.traits) && /Parry/.test(m.traits));
 });
 
@@ -125,12 +127,6 @@ test("save-based action keeps damage, no attack bonus", () => {
 test("extra damage is combined", () => {
   const a = GM.parseAction("Bite", "Melee Weapon Attack: +6 to hit, reach 10 ft., one target. Hit: 15 (2d10 + 4) piercing damage plus 7 (2d6) poison damage.");
   assert.strictEqual(a.damage, "2d10+4+2d6");
-});
-
-test("multiattack with one weapon uses overall count", () => {
-  const attacks = [GM.parseAction("Longsword", "Melee Weapon Attack: +5 to hit. Hit: 7 (1d8 + 3) slashing damage."), GM.parseAction("Leadership (Recharges after a Short or Long Rest)", "For 1 minute, the knight can utter a special command.")];
-  GM.applyMultiattack("The knight makes two melee attacks.", attacks);
-  assert.deepStrictEqual(attacks.map((a) => a.count), [2, 0]);
 });
 
 test("Open5e record mapping", () => {
@@ -187,26 +183,6 @@ test("Open5e abilities, saves and skills", () => {
   assert.deepStrictEqual(m.abilities, { str: 18, dex: 15, con: 16, int: 10, wis: 12, cha: 15 });
   assert.deepStrictEqual(m.saves, { str: 7, dex: 5, con: 6 });
   assert.deepStrictEqual(m.skills, { athletics: 10, intimidation: 5 });
-});
-
-test("unnamed multiattack counts the one weapon, never spells", () => {
-  const attacks = [
-    GM.parseAction("Mace", "Melee Weapon Attack: +4 to hit. Hit: 5 (1d6 + 2) bludgeoning damage."),
-    GM.parseAction("Flame Strike (5th-Level; V, S, M)", "Each creature in a 10-foot-radius must make a DC 17 Dexterity saving throw, taking 14 (4d6) fire damage on a failed save."),
-  ];
-  GM.applyMultiattack("The archpriest attacks twice.", attacks);
-  assert.deepStrictEqual(attacks.map((a) => a.count), [2, 0]);
-  GM.applyMultiattack("The archpriest attacks four times.", attacks);
-  assert.deepStrictEqual(attacks.map((a) => a.count), [4, 0]);
-});
-
-test("unnamed count goes to the first matching attack", () => {
-  const attacks = [
-    GM.parseAction("Spear", "Melee or Ranged Weapon Attack: +7 to hit. Hit: 11 (2d6 + 4) piercing damage."),
-    GM.parseAction("Shield Bash", "Melee Weapon Attack: +7 to hit. Hit: 9 (2d4 + 4) bludgeoning damage."),
-  ];
-  GM.applyMultiattack("The gladiator makes three melee attacks or two ranged attacks.", attacks);
-  assert.deepStrictEqual(attacks.map((a) => a.count), [3, 0]);
 });
 
 test("splits several pasted stat blocks", () => {

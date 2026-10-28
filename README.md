@@ -16,13 +16,13 @@ Your monsters and the current combat are saved on the device automatically. Use 
 - Initiative order with rounds and turns; **Back** undoes an accidental Next turn.
 - Ties go to the higher initiative bonus; events (lair actions, tides, reinforcements) lose ties.
 - Damage, healing (capped at max HP) and temporary HP; condition tracking; a Concentration save reminder when a concentrating creature takes damage.
-- Attack, advantage/disadvantage, damage and critical damage rolls for every attack, plus one-tap multiattack. Damage with a choice (one- or two-handed, full or half HP) rolls every option, e.g. `11 or 13 two-handed`.
+- Attack, advantage/disadvantage, damage and critical damage rolls for every attack. A monster's multiattack rule is shown above its attacks, so you can tap through whichever mix it's using. Damage with a choice (one- or two-handed, full or half HP) rolls every option, e.g. `11 or 13 two-handed`.
 - Ability scores, saving throws and skills on every monster; tap one to roll a check or save. Proficient saves are outlined.
 - Add several copies of a monster at once (Sahuagin 1, 2, 3…), each rolling initiative, sharing a group roll, or using a set number.
 - Save and load combats as files. Files saved by the old Python tracker still load.
 
 **Monsters**
-- **Paste stat blocks**: copy a monster from D&D Beyond (or a PDF or website) and paste it in. Name, AC, HP, initiative bonus, traits, attacks, damage and multiattack counts are filled in for you to check before saving. Handles both the 2014 and 2024 stat block styles.
+- **Paste stat blocks**: copy a monster from D&D Beyond (or a PDF or website) and paste it in. Name, AC, HP, initiative bonus, abilities, saves, skills, traits, attacks, damage and multiattack are filled in for you to check before saving. Handles both the 2014 and 2024 stat block styles.
 - **Bulk paste**: paste several stat blocks one after another in the same box. The app splits them apart and shows a checklist, flagging any that are missing HP, AC or attacks, or that you already have. A line of `---` between monsters forces a split if one is ever missed.
 - **Bestiary**: all 3,207 monsters from [Open5e](https://open5e.com) (5e SRD, Tome of Beasts 1–3, Creature Codex, Black Flag, Level Up Monstrous Menagerie and more) are built in and work offline. Search by name, filter by source and CR, add straight to combat, or copy one to your monsters to customize it. The combat **Add monsters** picker searches the bestiary too. Sources and licenses are listed in `data/OPEN5E-LICENSES.md`.
 - Filter your library by source book (Ghosts of Saltmarsh, Basic Rules, homebrew…).

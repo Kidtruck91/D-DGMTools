@@ -339,6 +339,7 @@ label.check input { width: 22px; min-height: 22px; accent-color: var(--brass); }
 .abilities-edit { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 .abilities-edit input { text-align: center; padding: 8px 4px; }
 .attack-row .alt { grid-column: 1 / 4; }
+.multi-text { margin: 0 0 10px; padding: 10px 12px; border-left: 3px solid var(--brass); background: var(--panel-2); border-radius: 0 var(--r-sm) var(--r-sm) 0; max-width: 75ch; }
 .traits { white-space: pre-wrap; font-size: 0.95rem; max-width: 75ch; }
 
 .last-roll {
@@ -462,7 +463,7 @@ dialog legend { padding: 0 6px; font-weight: 600; }
 
 .attack-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1.4fr 1fr auto;
+  grid-template-columns: 2fr 1fr 1.4fr auto;
   gap: 8px;
   align-items: end;
   padding: 10px;

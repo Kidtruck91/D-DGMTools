@@ -29,8 +29,19 @@
     lastRoll: null,
     log: store.get("log", []),
   };
-  state.combat.entities.forEach((e) => { e.id = e.id || uid(); e.order = e.order || ++orderCounter; });
-  state.monsters.forEach((m) => { m.id = m.id || uid(); });
+  // Older saves kept multiattack as the first line of traits, with a count on each attack.
+  function upgradeMonster(m) {
+    if (!m || m.kind === "event") return m;
+    if (!m.multiattack && m.traits) {
+      const line = m.traits.match(/^Multiattack\.\s*(.+)$/m);
+      if (line) { m.multiattack = line[1].trim(); m.traits = m.traits.replace(line[0], "").replace(/^\n+/, "").trim(); }
+    }
+    delete m.ma;
+    (m.attacks || []).forEach((a) => { delete a.count; });
+    return m;
+  }
+  state.combat.entities.forEach((e) => { e.id = e.id || uid(); e.order = e.order || ++orderCounter; upgradeMonster(e); });
+  state.monsters.forEach((m) => { m.id = m.id || uid(); upgradeMonster(m); });
 
   const saveCombat = () => { store.set("combat", state.combat); store.set("log", state.log.slice(0, 80)); };
   const saveMonsters = () => store.set("monsters", state.monsters);
@@ -264,34 +275,6 @@
     const tag = d.value === 20 ? "crit" : d.value === 1 ? "fumble" : "";
     showRoll(d.value + bonus, entity.name + " · " + what + ": " + d.value + " " + signed(bonus) + (tag === "crit" ? " — natural 20" : tag === "fumble" ? " — natural 1" : ""), tag);
   }
-  function rollMultiattack(entity) {
-    const lines = [];
-    let total = 0;
-    for (const attack of entity.attacks || []) {
-      const times = Math.max(0, Math.min(20, attack.count == null ? 1 : attack.count));
-      for (let i = 0; i < times; i++) {
-        if (attack.bonus == null && !attack.damage) { lines.push("uses " + attack.name); continue; }
-        let line = attack.name + ": ";
-        if (attack.bonus != null) {
-          const d = GM.rollD20();
-          line += "hits " + (d.value + attack.bonus) + (d.value === 20 ? " (nat 20)" : d.value === 1 ? " (nat 1)" : "");
-        }
-        if (attack.damage) {
-          try {
-            const r = GM.roll(attack.damage);
-            line += (attack.bonus != null ? ", " : "") + r.total + " damage";
-            total += r.total;
-            (attack.alt || []).forEach((o) => { try { line += " (or " + GM.roll(o.damage).total + " " + o.label + ")"; } catch (e) { /* skip */ } });
-          }
-          catch (e) { line += "bad damage dice"; }
-        }
-        lines.push(line);
-      }
-    }
-    if (!lines.length) { toast("Set multiattack uses on this creature's attacks."); return; }
-    lines.slice().reverse().forEach((l) => addLog("  " + l));
-    showRoll(total, entity.name + " multiattack — " + lines.join("; ") + " · total damage if all hit", "");
-  }
   function rollInitiative(bonus) { return 1 + Math.floor(Math.random() * 20) + (bonus || 0); }
 
   /* ---------- Combat rendering ---------- */
@@ -383,15 +366,15 @@
     const conds = '<div class="d-section"><h3>Conditions</h3><div class="conditions">' + CONDITIONS.map((c) => '<button class="cond" data-cond="' + c + '" aria-pressed="' + (e.conditions || []).includes(c) + '">' + c + "</button>").join("") + "</div></div>";
     const attacks = (e.attacks || []).map((a, i) =>
       '<div class="attack"><div class="attack-name">' + esc(a.name) + "</div>" +
-      '<div class="attack-stats">' + (a.bonus != null ? signed(a.bonus) + " to hit" : "No attack roll") + (a.damage ? " · " + esc(a.damage) + (a.alt || []).map((o) => " or " + esc(o.damage) + " " + esc(o.label)).join("") : "") + (e.ma ? " · ×" + (a.count == null ? 1 : a.count) + " in multiattack" : "") + "</div>" +
+      '<div class="attack-stats">' + (a.bonus != null ? signed(a.bonus) + " to hit" : "No attack roll") + (a.damage ? " · " + esc(a.damage) + (a.alt || []).map((o) => " or " + esc(o.damage) + " " + esc(o.label)).join("") : "") + "</div>" +
       '<div class="attack-buttons">' +
       (a.bonus != null ? '<button class="btn small" data-atk="' + i + '" data-roll="hit">Attack</button><button class="btn small ghost" data-atk="' + i + '" data-roll="adv" title="Attack with advantage">Adv</button><button class="btn small ghost" data-atk="' + i + '" data-roll="dis" title="Attack with disadvantage">Dis</button>' : "") +
       (a.damage ? '<button class="btn small" data-atk="' + i + '" data-roll="dmg">Damage</button>' + (a.bonus != null ? '<button class="btn small ghost" data-atk="' + i + '" data-roll="crit">Crit</button>' : "") : "") +
       "</div>" +
       (a.description ? "<details><summary>Details</summary>" + esc(a.description) + "</details>" : "") +
       "</div>").join("");
-    const attackSection = (e.attacks || []).length || e.ma
-      ? '<div class="d-section"><h3>Attacks and actions</h3>' + (e.ma ? '<p><button class="btn primary" data-act="multi">Roll multiattack</button></p>' : "") + '<div class="attacks">' + attacks + "</div></div>"
+    const attackSection = (e.attacks || []).length || e.multiattack
+      ? '<div class="d-section"><h3>Attacks and actions</h3>' + (e.multiattack ? '<p class="multi-text"><b>Multiattack.</b> ' + esc(e.multiattack) + "</p>" : "") + '<div class="attacks">' + attacks + "</div></div>"
       : "";
     const traits = e.traits ? '<div class="d-section"><h3>Traits</h3><div class="traits">' + esc(e.traits) + "</div></div>" : "";
     el.innerHTML = head + vitals + lastHtml + attackSection + statsHtml(e) + conds + traits + logHtml;
@@ -414,7 +397,6 @@
     if (!t) return;
     if (t.dataset.act === "edit") return e.kind === "event" ? openEventEditor(e) : openCreatureEditor({ mode: "combat", item: e });
     if (t.dataset.act === "remove") { if (confirm("Remove " + e.name + " from combat?")) removeEntity(e.id); return; }
-    if (t.dataset.act === "multi") return rollMultiattack(e);
     if (t.dataset.hp) {
       const raw = $("#hp-amount").value.trim();
       if (!/^\d+$/.test(raw)) { toast("Enter a whole number of hit points."); $("#hp-amount").focus(); return; }
@@ -496,7 +478,6 @@
       '<label class="name">Name<input data-f="name" value="' + esc(a.name) + '"></label>' +
       '<label>Attack bonus<input data-f="bonus" inputmode="numeric" placeholder="None" value="' + esc(a.bonus == null ? "" : a.bonus) + '"></label>' +
       '<label>Damage<input data-f="damage" placeholder="2d6+3" value="' + esc(a.damage) + '"></label>' +
-      '<label>Multiattack uses<input data-f="count" inputmode="numeric" value="' + esc(a.count == null ? 1 : a.count) + '"></label>' +
       '<label class="alt">Or instead (optional)<input data-f="alt" placeholder="1d8+3 two-handed" value="' + esc((a.alt || []).map((o) => o.damage + " " + o.label).join("; ")) + '"></label>' +
       '<button type="button" class="btn ghost small danger-text" data-remove-attack aria-label="Remove attack">Remove</button>' +
       '<label class="desc">Description<textarea data-f="description" rows="2">' + esc(a.description) + "</textarea></label>";
@@ -520,7 +501,7 @@
   function openCreatureEditor(ctx) {
     editorCtx = ctx;
     const form = $("#creature-form");
-    const item = ctx.item || { name: "", initiative: "", initiative_bonus: "", hp: null, max_hp: null, ac: null, source: ctx.mode === "library" ? state.prefs.lastSource || "" : "", traits: "", ma: false, attacks: [] };
+    const item = ctx.item || { name: "", initiative: "", initiative_bonus: "", hp: null, max_hp: null, ac: null, source: ctx.mode === "library" ? state.prefs.lastSource || "" : "", traits: "", attacks: [] };
     $("#creature-title").textContent = ctx.title || (ctx.item && !ctx.fresh ? "Edit " + item.name : ctx.mode === "library" ? "New monster" : "Add creature");
     $("#creature-save").textContent = ctx.mode === "library" ? "Save to my monsters" : ctx.item && !ctx.fresh ? "Save changes" : "Add to combat";
     $$("[data-combat-only]", form).forEach((el) => { el.hidden = ctx.mode === "library"; });
@@ -535,7 +516,7 @@
     GM.ABILITIES.forEach((k) => { form["ab_" + k].value = item.abilities && item.abilities[k] != null ? item.abilities[k] : ""; });
     form.saves.value = GM.formatBonuses(item.saves);
     form.skills.value = GM.formatBonuses(item.skills);
-    form.ma.checked = !!item.ma;
+    form.multiattack.value = item.multiattack || "";
     const rows = $("#attack-rows");
     rows.innerHTML = "";
     (item.attacks || []).forEach((a) => rows.appendChild(attackRow(a)));
@@ -545,7 +526,7 @@
     if (!item.name) form.name.focus();
   }
   $("#add-attack-row").addEventListener("click", () => {
-    const row = attackRow({ name: "", bonus: "", damage: "", count: 1, description: "" });
+    const row = attackRow({ name: "", bonus: "", damage: "", description: "" });
     $("#attack-rows").appendChild(row);
     row.querySelector("input").focus();
   });
@@ -571,9 +552,6 @@
         if (!f("name")) throw new Error(label + "give it a name or remove it.");
         const damage = f("damage").replace(/\s+/g, "");
         if (damage && !GM.isDice(damage)) throw new Error(label + "damage should look like 2d6+3.");
-        let count;
-        try { count = int(f("count"), 1); } catch (e) { throw new Error(label + "multiattack uses must be a number."); }
-        if (count < 0 || count > 20) throw new Error(label + "multiattack uses must be 0–20.");
         let bonus;
         try { bonus = int(f("bonus"), null); } catch (e) { throw new Error(label + "attack bonus must be a number, or blank."); }
         const alt = f("alt") ? f("alt").split(";").map((part) => {
@@ -581,7 +559,7 @@
           if (!m || !GM.isDice(m[1])) throw new Error(label + "“Or instead” should look like 1d8+3 two-handed.");
           return { damage: m[1], label: m[2].trim() || "alternate" };
         }) : [];
-        const out = { name: f("name"), bonus, damage, count, description: f("description") };
+        const out = { name: f("name"), bonus, damage, description: f("description") };
         if (alt.length) out.alt = alt;
         return out;
       });
@@ -597,7 +575,7 @@
         abilities: readAbilities(form),
         saves: GM.parseSaves(form.saves.value),
         skills: GM.parseSkills(form.skills.value),
-        ma: form.ma.checked,
+        multiattack: form.multiattack.value.trim(),
         attacks,
       };
       if (editorCtx.mode === "library") {
@@ -707,8 +685,9 @@
       let added = 0, skipped = 0;
       list.forEach((raw) => {
         if (!raw || !raw.name) { skipped++; return; }
-        const m = Object.assign({ kind: "creature", initiative_bonus: 0, hp: null, ac: null, traits: "", ma: false, attacks: [] }, clone(raw));
+        const m = Object.assign({ kind: "creature", initiative_bonus: 0, hp: null, ac: null, traits: "", attacks: [] }, clone(raw));
         delete m.initiative; delete m.conditions; delete m.temp_hp; delete m.order;
+        upgradeMonster(m);
         m.source = m.source || fallbackSource.trim();
         if (m.max_hp == null) m.max_hp = m.hp;
         if (existing.has(key(m))) { skipped++; return; }
@@ -897,9 +876,9 @@
   function fullMonster(m) {
     const c = clone(m);
     delete c._search;
-    const out = Object.assign({ kind: "creature", initiative_bonus: 0, hp: null, ac: null, traits: "", ma: false, source: "" }, c);
+    const out = Object.assign({ kind: "creature", initiative_bonus: 0, hp: null, ac: null, traits: "", source: "" }, c);
     out.max_hp = out.max_hp != null ? out.max_hp : out.hp;
-    out.attacks = (c.attacks || []).map((a) => Object.assign({ name: "", bonus: null, damage: "", count: 1, description: "" }, a));
+    out.attacks = (c.attacks || []).map((a) => Object.assign({ name: "", bonus: null, damage: "", description: "" }, a));
     return out;
   }
   const crNumber = (cr) => { const t = String(cr); if (t.includes("/")) { const [a, b] = t.split("/"); return a / b; } return parseFloat(t) || 0; };

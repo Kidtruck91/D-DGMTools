@@ -79,7 +79,7 @@
   // Turns "Scimitar" + "Melee Weapon Attack: +4 to hit ... Hit: 5 (1d6 + 2) slashing damage." into an attack.
   function parseAction(name, desc) {
     const text = String(desc || "").replace(/[−–]/g, "-");
-    const attack = { name: name.trim(), bonus: null, damage: "", count: 1, description: text.trim() };
+    const attack = { name: name.trim(), bonus: null, damage: "", description: text.trim() };
     const hit = text.match(/(?:Weapon Attack|Spell Attack|Attack Roll)[^:]*:\s*([+-]\s*\d+)/i);
     if (hit) attack.bonus = toInt(hit[1]);
     const hitIndex = text.search(/\bHit:/i);
@@ -205,51 +205,6 @@
     return { abilities: Object.keys(abilities).length ? abilities : null, saves, skills };
   }
 
-  // Reads a Multiattack description and sets each attack's count (0 = not part of multiattack).
-  function applyMultiattack(text, attacks) {
-    // Only the first option counts: "three melee attacks … or two ranged attacks" rolls the melee set.
-    let first = String(text || "").toLowerCase();
-    const alt = first.search(/\bor\s+(?:the\s+[a-z]+\s+|it\s+|instead\s+)?(?:makes?\s+|can\s+make\s+)?(?:\d+|one|two|three|four|five|six)\s+(?:[a-z]+\s+){0,2}attacks?\b/);
-    if (alt > 0) first = first.slice(0, alt);
-    const t = " " + first.replace(/[^a-z0-9 ]+/g, " ") + " ";
-    const weaponAttacks = attacks.filter((a) => a.bonus != null || a.damage);
-    let any = false;
-    const counts = attacks.map((a) => {
-      const words = a.name.toLowerCase().replace(/\([^)]*\)/g, "").replace(/[^a-z0-9 ]+/g, " ").trim();
-      if (!words) return null;
-      const stem = singular(words.split(/\s+/).pop());
-      // Skipped words may not be another count or a joining word, so "two attacks: one with its beak" counts the beak once.
-      const skip = "(?:(?!(?:\\d+|one|two|three|four|five|six|a|an|once|twice|thrice|and|or|then|uses|use|plus)\\b)[a-z]+\\s+)";
-      const re = new RegExp("\\b(\\d+|one|two|three|four|five|six|a|an|once|twice|thrice)\\s+" + skip + "{0,3}?(?:with\\s+(?:its|their|his|her)\\s+)?" + skip + "{0,2}?" + stem + "[a-z]*\\b(?!\\s+drawn)", "g");
-      let total = null;
-      let m;
-      while ((m = re.exec(t))) {
-        const n = toInt(m[1]);
-        if (n) total = (total || 0) + n;
-      }
-      if (total == null && new RegExp("\\b" + stem + "[a-z]*\\b").test(t)) total = 1;
-      if (total != null) any = true;
-      return total;
-    });
-    if (any) {
-      attacks.forEach((a, i) => { a.count = Math.min(20, counts[i] || 0); });
-      return;
-    }
-    // No attack named: only attack rolls take part. "Makes two attacks", "attacks twice"
-    // and "attacks four times" set the total when there is one weapon to use.
-    const overall = t.match(/makes?\s+(\w+)\s+(?:[a-z]+\s+){0,2}?attacks?\b/) || t.match(/\battacks\s+(\w+)\s+times\b/) || t.match(/\battacks\s+(twice|thrice|once)\b/);
-    const n = overall ? toInt(overall[1]) : null;
-    const rolled = attacks.filter((a) => a.bonus != null);
-    if (n && rolled.length) {
-      // "Makes three melee attacks": give the whole count to the first melee attack (or ranged, if it says so).
-      const kind = /\branged\b/.test(overall[0]) ? /ranged/i : /\bmelee\b/.test(overall[0]) ? /melee/i : null;
-      const pick = (kind && rolled.find((a) => kind.test(a.description))) || rolled[0];
-      attacks.forEach((a) => { a.count = a === pick ? Math.min(20, n) : 0; });
-      return;
-    }
-    attacks.forEach((a) => { a.count = a.bonus == null ? 0 : 1; });
-  }
-
   /* ---------- D&D Beyond / book stat block text ---------- */
   const SECTION = /^(traits|actions|bonus actions|reactions|legendary actions|lair actions|mythic actions|regional effects)\s*:?$/i;
   const STAT_LINE = /^(armor class|ac|hit points|hp|speed|initiative|str|dex|con|int|wis|cha|mod|save|saving throws|skills|damage|condition|senses|languages|challenge|cr|proficiency bonus|gear|immunities|resistances|vulnerabilities)\b/i;
@@ -260,7 +215,7 @@
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
     if (!lines.length) throw new Error("Paste a stat block first.");
     const flat = lines.join("\n");
-    const monster = { kind: "creature", name: "", initiative: 0, initiative_bonus: 0, hp: null, max_hp: null, ac: null, traits: "", ma: false, attacks: [], source: "" };
+    const monster = { kind: "creature", name: "", initiative: 0, initiative_bonus: 0, hp: null, max_hp: null, ac: null, traits: "", attacks: [], source: "" };
 
     monster.name = lines.find((l) => !/^(source|monster|stat block)\b/i.test(l)) || lines[0];
     monster.name = monster.name.replace(/\s+(?:CR|Challenge)\s.*$/i, "").trim();
@@ -324,11 +279,7 @@
       if (/^multiattack$/i.test(a.name)) { multi = a.desc; continue; }
       monster.attacks.push(parseAction(a.name, a.desc));
     }
-    if (multi) {
-      monster.ma = true;
-      monster.traits = ("Multiattack. " + multi + (monster.traits ? "\n" + monster.traits : "")).trim();
-      applyMultiattack(multi, monster.attacks);
-    }
+    if (multi) monster.multiattack = multi.trim();
     if (!monster.name) throw new Error("Couldn't find a monster name on the first line.");
     return monster;
   }
@@ -374,7 +325,6 @@
       max_hp: rec.hit_points != null ? rec.hit_points : null,
       ac: rec.armor_class != null ? rec.armor_class : null,
       traits: "",
-      ma: false,
       attacks: [],
       source: rec.document__title || "",
     };
@@ -410,16 +360,12 @@
       }
       monster.attacks.push(attack);
     }
-    if (multi) {
-      monster.ma = true;
-      traits.unshift("Multiattack. " + multi);
-      applyMultiattack(multi, monster.attacks);
-    }
+    if (multi) monster.multiattack = multi.trim();
     monster.traits = traits.filter(Boolean).join("\n").trim();
     return monster;
   }
 
-  const api = { roll, rollD20, abilityMod, parseAction, parseSaves, parseSkills, formatBonuses, ABILITIES, applyMultiattack, parseStatBlock, splitStatBlocks, fromOpen5e, isDice };
+  const api = { roll, rollD20, abilityMod, parseAction, parseSaves, parseSkills, formatBonuses, ABILITIES, parseStatBlock, splitStatBlocks, fromOpen5e, isDice };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GM = api;
 })(typeof window !== "undefined" ? window : globalThis);

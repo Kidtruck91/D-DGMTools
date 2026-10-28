@@ -55,7 +55,7 @@ const compact = monsters.map((m) => {
   for (const [k, v] of Object.entries(m)) {
     if (v === null || v === "" || v === false || (Array.isArray(v) && !v.length) || k === "kind" || k === "initiative") continue;
     if (k === "max_hp" && v === m.hp) continue;
-    out[k] = k === "attacks" ? v.map((a) => { const o = {}; for (const [ak, av] of Object.entries(a)) { if (av === null || av === "" || (ak === "count" && av === 1)) continue; o[ak] = av; } return o; }) : v;
+    out[k] = k === "attacks" ? v.map((a) => { const o = {}; for (const [ak, av] of Object.entries(a)) { if (av === null || av === "") continue; o[ak] = av; } return o; }) : v;
   }
   return out;
 });
