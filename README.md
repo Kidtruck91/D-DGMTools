@@ -16,7 +16,8 @@ Your monsters and the current combat are saved on the device automatically. Use 
 - Initiative order with rounds and turns; **Back** undoes an accidental Next turn.
 - Ties go to the higher initiative bonus; events (lair actions, tides, reinforcements) lose ties.
 - Damage, healing (capped at max HP) and temporary HP; condition tracking; a Concentration save reminder when a concentrating creature takes damage.
-- Attack, advantage/disadvantage, damage and critical damage rolls for every attack, plus one-tap multiattack.
+- Attack, advantage/disadvantage, damage and critical damage rolls for every attack, plus one-tap multiattack. Damage with a choice (one- or two-handed, full or half HP) rolls every option, e.g. `11 or 13 two-handed`.
+- Ability scores, saving throws and skills on every monster; tap one to roll a check or save. Proficient saves are outlined.
 - Add several copies of a monster at once (Sahuagin 1, 2, 3…), each rolling initiative, sharing a group roll, or using a set number.
 - Save and load combats as files. Files saved by the old Python tracker still load.
 

@@ -38,6 +38,7 @@ for (const folder of fs.readdirSync(v1).sort()) {
       reactions: parseJSON(f.reactions_json) || [],
       legendary_actions: parseJSON(f.legendary_actions_json) || [],
       special_abilities: parseJSON(f.special_abilities_json) || [],
+      skills: parseJSON(f.skills_json) || null,
     });
     const m = GM.fromOpen5e(apiShape);
     m.id = "o5:" + rec.pk;

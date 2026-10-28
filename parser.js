@@ -88,18 +88,130 @@
     if (damageText) {
       // Stop at "Miss:" or "Success:" so half-damage text is not added twice.
       damageText = damageText.split(/\b(?:Miss:|Success:|or half as much)/i)[0];
-      const dice = [];
-      const re = /\d+\s*\(\s*(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*\)/gi;
-      let m;
-      while ((m = re.exec(damageText)) && dice.length < 4) dice.push(cleanDice(m[1]));
-      if (dice.length) attack.damage = dice.join("+").replace(/\+-/g, "-");
+      // "7 (1d6 + 4) piercing damage, or 8 (1d8 + 4) … if used with two hands" is a choice, not a sum.
+      const parts = damageText.split(/,?\s+or\s+(?=\d+\s*\(\s*\d+d\d+)/i);
+      // A trailing ", plus 3 (1d6) fire damage" after the last choice applies to every choice.
+      let shared = [];
+      if (parts.length > 1) {
+        const last = parts.length - 1;
+        const plus = parts[last].search(/,\s*plus\s+\d+\s*\(/i);
+        if (plus >= 0) { shared = diceIn(parts[last].slice(plus)); parts[last] = parts[last].slice(0, plus); }
+      }
+      const primary = diceIn(parts[0]).concat(shared);
+      if (primary.length) attack.damage = joinDice(primary);
+      const alts = parts.slice(1).map((part) => {
+        const dice = diceIn(part).concat(shared);
+        return dice.length ? { damage: joinDice(dice), label: choiceLabel(part) } : null;
+      }).filter(Boolean);
+      if (alts.length && attack.damage) attack.alt = alts;
     }
     return attack;
   }
 
+  function diceIn(text) {
+    const dice = [];
+    const re = /\d+\s*\(\s*(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*\)/gi;
+    let m;
+    while ((m = re.exec(text)) && dice.length < 4) dice.push(cleanDice(m[1]));
+    return dice;
+  }
+  const joinDice = (dice) => dice.join("+").replace(/\+-/g, "-");
+
+  // A short name for an alternative damage option, from the words after it.
+  function choiceLabel(text) {
+    const t = String(text).replace(/^[^)]*\)\s*/, "").replace(/\s+/g, " ").trim();
+    if (/two hands|two-handed|both hands/i.test(t)) return "two-handed";
+    if (/half (?:of )?(?:its|their) (?:hit points|hp)|half or fewer hit points|\bbloodied\b/i.test(t)) return "at half HP";
+    if (/\bmov(?:es|ed) at least\b/i.test(t)) return "after moving";
+    if (/\bused to make a melee attack\b|\bin melee\b/i.test(t)) return "melee";
+    if (/\branged\b|\bthrown\b/i.test(t)) return "ranged";
+    const form = t.match(/\bin (\w+) form\b/i);
+    if (form) return form[1].toLowerCase() + " form";
+    const cond = t.match(/\b((?:if|while|when|with|against)\b[^.,;]{1,40})/i);
+    if (cond) {
+      const phrase = cond[1].trim().toLowerCase();
+      return phrase.length <= 26 ? phrase : phrase.slice(0, 24).replace(/\s+\S*$/, "") + "…";
+    }
+    return "alternate";
+  }
+
+  /* ---------- Abilities, saves and skills ---------- */
+  const ABILITIES = ["str", "dex", "con", "int", "wis", "cha"];
+  const ABILITY_RE = /\b(str|dex|con|int|wis|cha)(?:ength|terity|stitution|elligence|dom|risma)?\b/i;
+
+  // "Dex +5, Con +6" → { dex: 5, con: 6 }
+  function parseSaves(text) {
+    const saves = {};
+    const re = /\b(str|dex|con|int|wis|cha)[a-z]*\.?\s*([+-]\s*\d+)/gi;
+    let m;
+    while ((m = re.exec(String(text || "").replace(/[−–]/g, "-")))) saves[m[1].toLowerCase()] = toInt(m[2]);
+    return saves;
+  }
+  const SKILLS = ["acrobatics", "animal handling", "arcana", "athletics", "deception", "history", "insight", "intimidation", "investigation", "medicine", "nature", "perception", "performance", "persuasion", "religion", "sleight of hand", "stealth", "survival"];
+  const SKILL_ALIASES = { animal: "animal handling", sleight: "sleight of hand", "animal_handling": "animal handling", "sleight_of_hand": "sleight of hand" };
+  function skillName(raw) {
+    const k = String(raw).trim().toLowerCase();
+    const name = SKILL_ALIASES[k] || k.replace(/_/g, " ");
+    return SKILLS.includes(name) ? name : null;
+  }
+  // "Perception +5, Sleight of Hand +4" → { perception: 5, "sleight of hand": 4 }
+  function parseSkills(text) {
+    const skills = {};
+    const re = /([A-Za-z][A-Za-z' ]*?)\s*([+-]\s*\d+)/g;
+    let m;
+    while ((m = re.exec(String(text || "").replace(/[−–]/g, "-")))) {
+      const name = skillName(m[1].trim().replace(/^,\s*/, ""));
+      if (name) skills[name] = toInt(m[2]);
+    }
+    return skills;
+  }
+  const formatBonuses = (map) => Object.entries(map || {}).map(([k, v]) => k.replace(/\b\w/g, (c) => c.toUpperCase()) + " " + (v >= 0 ? "+" : "") + v).join(", ");
+
+  function parseAbilityBlock(lines, flat) {
+    const abilities = {};
+    const saves = {};
+    // 2024 style: "Str 15 +2 +4" (score, modifier, save), possibly split over lines.
+    const spaced = lines.join(" ");
+    const modern = /\b(str|dex|con|int|wis|cha)\b\s*(\d{1,2})\s+([+-]\s*\d+)\s+([+-]\s*\d+)/gi;
+    let m;
+    while ((m = modern.exec(spaced))) {
+      const key = m[1].toLowerCase();
+      if (abilities[key] != null) continue;
+      abilities[key] = parseInt(m[2], 10);
+      const mod = toInt(m[3]);
+      const save = toInt(m[4]);
+      if (save !== mod) saves[key] = save;
+    }
+    if (Object.keys(abilities).length < 6) {
+      // 2014 style: "STR 20 (+5)" one per line, or a header row then "19 (+4) 8 (-1) …".
+      const pair = /\b(str|dex|con|int|wis|cha)\b\s*:?\s*(\d{1,2})\s*\(\s*[+-]\s*\d+\s*\)/gi;
+      while ((m = pair.exec(spaced))) {
+        const key = m[1].toLowerCase();
+        if (abilities[key] == null) abilities[key] = parseInt(m[2], 10);
+      }
+    }
+    if (Object.keys(abilities).length < 6) {
+      const header = lines.findIndex((l) => /\bSTR\b/i.test(l) && /\bDEX\b/i.test(l) && /\bCHA\b/i.test(l));
+      if (header >= 0) {
+        const after = lines.slice(header + 1, header + 8).join(" ");
+        const scores = [...after.matchAll(/(\d{1,2})\s*\(\s*[+-]\s*\d+\s*\)/g)].slice(0, 6);
+        if (scores.length === 6) ABILITIES.forEach((k, i) => { abilities[k] = parseInt(scores[i][1], 10); });
+      }
+    }
+    const saveLine = flat.match(/^(?:Saving Throws|Saves)\s*:?\s*(.+)$/im);
+    if (saveLine) Object.assign(saves, parseSaves(saveLine[1]));
+    const skillLine = flat.match(/^Skills\s*:?\s*(.+)$/im);
+    const skills = skillLine ? parseSkills(skillLine[1]) : {};
+    return { abilities: Object.keys(abilities).length ? abilities : null, saves, skills };
+  }
+
   // Reads a Multiattack description and sets each attack's count (0 = not part of multiattack).
   function applyMultiattack(text, attacks) {
-    const t = " " + String(text || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ") + " ";
+    // Only the first option counts: "three melee attacks … or two ranged attacks" rolls the melee set.
+    let first = String(text || "").toLowerCase();
+    const alt = first.search(/\bor\s+(?:the\s+[a-z]+\s+|it\s+|instead\s+)?(?:makes?\s+|can\s+make\s+)?(?:\d+|one|two|three|four|five|six)\s+(?:[a-z]+\s+){0,2}attacks?\b/);
+    if (alt > 0) first = first.slice(0, alt);
+    const t = " " + first.replace(/[^a-z0-9 ]+/g, " ") + " ";
     const weaponAttacks = attacks.filter((a) => a.bonus != null || a.damage);
     let any = false;
     const counts = attacks.map((a) => {
@@ -108,7 +220,7 @@
       const stem = singular(words.split(/\s+/).pop());
       // Skipped words may not be another count or a joining word, so "two attacks: one with its beak" counts the beak once.
       const skip = "(?:(?!(?:\\d+|one|two|three|four|five|six|a|an|once|twice|thrice|and|or|then|uses|use|plus)\\b)[a-z]+\\s+)";
-      const re = new RegExp("\\b(\\d+|one|two|three|four|five|six|a|an|once|twice|thrice)\\s+" + skip + "{0,3}?(?:with\\s+(?:its|their|his|her)\\s+)?" + skip + "{0,2}?" + stem + "[a-z]*\\b", "g");
+      const re = new RegExp("\\b(\\d+|one|two|three|four|five|six|a|an|once|twice|thrice)\\s+" + skip + "{0,3}?(?:with\\s+(?:its|their|his|her)\\s+)?" + skip + "{0,2}?" + stem + "[a-z]*\\b(?!\\s+drawn)", "g");
       let total = null;
       let m;
       while ((m = re.exec(t))) {
@@ -128,9 +240,14 @@
     const overall = t.match(/makes?\s+(\w+)\s+(?:[a-z]+\s+){0,2}?attacks?\b/) || t.match(/\battacks\s+(\w+)\s+times\b/) || t.match(/\battacks\s+(twice|thrice|once)\b/);
     const n = overall ? toInt(overall[1]) : null;
     const rolled = attacks.filter((a) => a.bonus != null);
-    attacks.forEach((a) => {
-      a.count = a.bonus == null ? 0 : rolled.length === 1 && n ? Math.min(20, n) : 1;
-    });
+    if (n && rolled.length) {
+      // "Makes three melee attacks": give the whole count to the first melee attack (or ranged, if it says so).
+      const kind = /\branged\b/.test(overall[0]) ? /ranged/i : /\bmelee\b/.test(overall[0]) ? /melee/i : null;
+      const pick = (kind && rolled.find((a) => kind.test(a.description))) || rolled[0];
+      attacks.forEach((a) => { a.count = a === pick ? Math.min(20, n) : 0; });
+      return;
+    }
+    attacks.forEach((a) => { a.count = a.bonus == null ? 0 : 1; });
   }
 
   /* ---------- D&D Beyond / book stat block text ---------- */
@@ -155,23 +272,13 @@
     const src = flat.match(/^Source:?\s*(.+?)(?:,\s*(?:pg|page)\.?.*)?$/im);
     if (src) monster.source = src[1].trim();
 
+    const block = parseAbilityBlock(lines, flat);
+    if (block.abilities) monster.abilities = block.abilities;
+    if (Object.keys(block.saves).length) monster.saves = block.saves;
+    if (Object.keys(block.skills).length) monster.skills = block.skills;
     const init = flat.match(/\bInitiative\s*:?\s*([+-]\s*\d+)/i);
-    if (init) {
-      monster.initiative_bonus = toInt(init[1]);
-    } else {
-      let dex = flat.match(/\bDEX(?:terity)?\b\s*:?\s*(\d+)\s*\(?\s*[+-]/i);
-      if (dex) {
-        monster.initiative_bonus = abilityMod(dex[1]);
-      } else {
-        // Column layout: "STR DEX CON ..." header followed by "14 (+2) 12 (+1) ..."
-        const header = lines.findIndex((l) => /\bSTR\b/i.test(l) && /\bDEX\b/i.test(l));
-        if (header >= 0) {
-          const after = lines.slice(header + 1, header + 8).join(" ");
-          const scores = [...after.matchAll(/(\d+)\s*\(\s*[+-]\s*\d+\s*\)/g)];
-          if (scores.length >= 2) monster.initiative_bonus = abilityMod(scores[1][1]);
-        }
-      }
-    }
+    if (init) monster.initiative_bonus = toInt(init[1]);
+    else if (block.abilities && block.abilities.dex != null) monster.initiative_bonus = abilityMod(block.abilities.dex);
 
     // Split remaining text into sections of "Name. Description" entries.
     const sections = { traits: [], actions: [], other: [] };
@@ -271,6 +378,21 @@
       attacks: [],
       source: rec.document__title || "",
     };
+    const names = { str: "strength", dex: "dexterity", con: "constitution", int: "intelligence", wis: "wisdom", cha: "charisma" };
+    if (ABILITIES.every((k) => Number.isFinite(rec[names[k]]))) {
+      monster.abilities = {};
+      ABILITIES.forEach((k) => { monster.abilities[k] = rec[names[k]]; });
+    }
+    const saves = {};
+    ABILITIES.forEach((k) => { const v = rec[names[k] + "_save"]; if (v != null && v !== "") saves[k] = parseInt(v, 10); });
+    if (Object.keys(saves).length) monster.saves = saves;
+    let skills = rec.skills;
+    if (typeof skills === "string") { try { skills = JSON.parse(skills); } catch (e) { skills = null; } }
+    if (skills && typeof skills === "object" && !Array.isArray(skills)) {
+      const clean = {};
+      Object.entries(skills).forEach(([k, v]) => { const name = skillName(k); if (name && v != null && v !== "" && Number.isFinite(+v)) clean[name] = +v; });
+      if (Object.keys(clean).length) monster.skills = clean;
+    }
     const describe = (list) => (Array.isArray(list) ? list : []).map((x) => x.name + ". " + (x.desc || "")).join("\n");
     const traits = [describe(rec.special_abilities)];
     if (Array.isArray(rec.bonus_actions) && rec.bonus_actions.length) traits.push("Bonus Actions:\n" + describe(rec.bonus_actions));
@@ -297,7 +419,7 @@
     return monster;
   }
 
-  const api = { roll, rollD20, abilityMod, parseAction, applyMultiattack, parseStatBlock, splitStatBlocks, fromOpen5e, isDice };
+  const api = { roll, rollD20, abilityMod, parseAction, parseSaves, parseSkills, formatBonuses, ABILITIES, applyMultiattack, parseStatBlock, splitStatBlocks, fromOpen5e, isDice };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GM = api;
 })(typeof window !== "undefined" ? window : globalThis);

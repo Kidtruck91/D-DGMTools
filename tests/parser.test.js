@@ -148,6 +148,47 @@ test("Open5e record mapping", () => {
   assert.ok(/Nimble Escape/.test(m.traits));
 });
 
+test("damage choices stay separate", () => {
+  const a = GM.parseAction("Spear", "Melee or Ranged Weapon Attack: +7 to hit, reach 5 ft. or range 20/60 ft., one target. Hit: 11 (2d6 + 4) piercing damage, or 13 (2d8 + 4) piercing damage if used with two hands to make a melee attack.");
+  assert.strictEqual(a.damage, "2d6+4");
+  assert.deepStrictEqual(a.alt, [{ damage: "2d8+4", label: "two-handed" }]);
+});
+
+test("a trailing plus applies to every damage choice", () => {
+  const a = GM.parseAction("Flame Tongue Longsword", "Melee Weapon Attack: +6 to hit. Hit: 7 (1d8 + 3) slashing damage, or 8 (1d10 + 3) slashing damage if used with two hands, plus 3 (1d6) fire damage.");
+  assert.strictEqual(a.damage, "1d8+3+1d6");
+  assert.deepStrictEqual(a.alt, [{ damage: "1d10+3+1d6", label: "two-handed" }]);
+});
+
+test("swarm half-HP damage is a choice", () => {
+  const a = GM.parseAction("Bites", "Melee Weapon Attack: +3 to hit. Hit: 7 (2d6) piercing damage, or 3 (1d6) piercing damage if the swarm has half of its hit points or fewer.");
+  assert.strictEqual(a.damage, "2d6");
+  assert.deepStrictEqual(a.alt, [{ damage: "1d6", label: "at half HP" }]);
+});
+
+test("abilities, saves and skills from 2014 blocks", () => {
+  const m = GM.parseStatBlock(classic.replace("Senses", "Saving Throws Str +6, Con +5\nSkills Athletics +6, Sleight of Hand +1\nSenses"));
+  assert.deepStrictEqual(m.abilities, { str: 19, dex: 8, con: 16, int: 5, wis: 7, cha: 7 });
+  assert.deepStrictEqual(m.saves, { str: 6, con: 5 });
+  assert.deepStrictEqual(m.skills, { athletics: 6, "sleight of hand": 1 });
+  const o = GM.parseStatBlock(ddbLayout);
+  assert.deepStrictEqual(o.abilities, { str: 20, dex: 12, con: 17, int: 3, wis: 12, cha: 7 });
+  assert.deepStrictEqual(o.skills, { perception: 3 });
+});
+
+test("abilities and saves from 2024 blocks", () => {
+  const m = GM.parseStatBlock(modern.replace("Dex 16 +3 +5", "Dex 16 +3 +5\nCon 14 +2 +2\nInt 14 +2 +2\nWis 11 +0 +2\nCha 14 +2 +2"));
+  assert.deepStrictEqual(m.abilities, { str: 15, dex: 16, con: 14, int: 14, wis: 11, cha: 14 });
+  assert.deepStrictEqual(m.saves, { str: 4, dex: 5, wis: 2 });
+});
+
+test("Open5e abilities, saves and skills", () => {
+  const m = GM.fromOpen5e({ name: "Gladiator", strength: 18, dexterity: 15, constitution: 16, intelligence: 10, wisdom: 12, charisma: 15, strength_save: 7, dexterity_save: 5, constitution_save: 6, skills: '{"athletics": 10, "intimidation": 5}', actions: [] });
+  assert.deepStrictEqual(m.abilities, { str: 18, dex: 15, con: 16, int: 10, wis: 12, cha: 15 });
+  assert.deepStrictEqual(m.saves, { str: 7, dex: 5, con: 6 });
+  assert.deepStrictEqual(m.skills, { athletics: 10, intimidation: 5 });
+});
+
 test("unnamed multiattack counts the one weapon, never spells", () => {
   const attacks = [
     GM.parseAction("Mace", "Melee Weapon Attack: +4 to hit. Hit: 5 (1d6 + 2) bludgeoning damage."),
@@ -157,6 +198,15 @@ test("unnamed multiattack counts the one weapon, never spells", () => {
   assert.deepStrictEqual(attacks.map((a) => a.count), [2, 0]);
   GM.applyMultiattack("The archpriest attacks four times.", attacks);
   assert.deepStrictEqual(attacks.map((a) => a.count), [4, 0]);
+});
+
+test("unnamed count goes to the first matching attack", () => {
+  const attacks = [
+    GM.parseAction("Spear", "Melee or Ranged Weapon Attack: +7 to hit. Hit: 11 (2d6 + 4) piercing damage."),
+    GM.parseAction("Shield Bash", "Melee Weapon Attack: +7 to hit. Hit: 9 (2d4 + 4) bludgeoning damage."),
+  ];
+  GM.applyMultiattack("The gladiator makes three melee attacks or two ranged attacks.", attacks);
+  assert.deepStrictEqual(attacks.map((a) => a.count), [3, 0]);
 });
 
 test("splits several pasted stat blocks", () => {
