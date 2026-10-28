@@ -241,7 +241,12 @@
     let currentLabel = "";
     let pastStats = false;
     let last = null;
-    for (const line of lines.slice(1)) {
+    const body = lines.slice(1);
+    for (let li = 0; li < body.length; li++) {
+      const line = body[li];
+      // D&D Beyond copies each entry's name on its own line before "Name. Description"; skip the extra copy.
+      const next = body[li + 1] || "";
+      if (!/[.:]/.test(line) && line.length <= 60 && next.toLowerCase().startsWith(line.toLowerCase() + ".")) continue;
       const sec = line.match(SECTION);
       if (sec) {
         const label = sec[1].toLowerCase();

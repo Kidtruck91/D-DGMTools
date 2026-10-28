@@ -118,6 +118,42 @@ test("2024 stat block format", () => {
   assert.ok(/Reactions:/.test(m.traits) && /Parry/.test(m.traits));
 });
 
+test("D&D Beyond doubled entry names are skipped", () => {
+  const m = GM.parseStatBlock(`Gladiator
+Medium Humanoid (Any Race), Any Alignment
+Armor Class 16 (Studded Leather, Shield)
+Hit Points 112 (15d8 + 45)
+STR
+18 (+4)
+DEX
+15 (+2)
+CON
+16 (+3)
+INT
+10 (+0)
+WIS
+12 (+1)
+CHA
+15 (+2)
+Saving Throws STR +7, DEX +5, CON +6
+Skills Athletics +10, Intimidation +5
+Challenge 5 (1,800 XP)
+Brave
+Brave. The gladiator has advantage on saving throws against being frightened.
+Brute
+Brute. A melee weapon deals one extra die of its damage when the gladiator hits with it (included in the attack).
+Actions
+Multiattack
+Multiattack. The gladiator makes three melee attacks or two ranged attacks.
+Spear
+Spear. Melee or Ranged Weapon Attack: +7 to hit, reach 5 ft. and range 20/60 ft., one target. Hit: 11 (2d6 + 4) piercing damage, or 13 (2d8 + 4) piercing damage if used with two hands to make a melee attack.`);
+  assert.strictEqual(m.multiattack, "The gladiator makes three melee attacks or two ranged attacks.");
+  assert.strictEqual(m.traits, "Brave. The gladiator has advantage on saving throws against being frightened.\nBrute. A melee weapon deals one extra die of its damage when the gladiator hits with it (included in the attack).");
+  assert.deepStrictEqual(m.abilities, { str: 18, dex: 15, con: 16, int: 10, wis: 12, cha: 15 });
+  assert.deepStrictEqual(m.saves, { str: 7, dex: 5, con: 6 });
+  assert.deepStrictEqual([m.attacks[0].damage, m.attacks[0].alt], ["2d6+4", [{ damage: "2d8+4", label: "two-handed" }]]);
+});
+
 test("save-based action keeps damage, no attack bonus", () => {
   const a = GM.parseAction("Poison Breath (Recharge 5-6)", "The dragon exhales poisonous gas in a 30-foot cone. Each creature in that area must make a DC 14 Constitution saving throw, taking 42 (12d6) poison damage on a failed save, or half as much damage on a successful one.");
   assert.strictEqual(a.bonus, null);

@@ -37,7 +37,25 @@
       if (line) { m.multiattack = line[1].trim(); m.traits = m.traits.replace(line[0], "").replace(/^\n+/, "").trim(); }
     }
     delete m.ma;
-    (m.attacks || []).forEach((a) => { delete a.count; });
+    const names = (m.attacks || []).map((a) => a.name);
+    (m.attacks || []).forEach((a) => {
+      delete a.count;
+      // Damage saved before choices were split ("2d6+4+2d8+4"): read it again from the description.
+      if (!a.alt && /,?\s+or\s+\d+\s*\(\s*\d+d\d+/i.test(a.description || "")) {
+        const fresh = GM.parseAction(a.name, a.description);
+        if (fresh.damage && fresh.alt) { a.damage = fresh.damage; a.alt = fresh.alt; }
+      }
+    });
+    // Pastes from before the D&D Beyond fix left a doubled name at the end of the previous entry.
+    if (m.multiattack) names.forEach((n) => { if (n && m.multiattack.endsWith(" " + n)) m.multiattack = m.multiattack.slice(0, -n.length - 1); });
+    if (m.traits) {
+      const lines = m.traits.split("\n");
+      for (let i = 0; i < lines.length - 1; i++) {
+        const next = lines[i + 1].match(/^([^.]{1,60})\.\s/);
+        if (next && lines[i].endsWith(" " + next[1])) lines[i] = lines[i].slice(0, -next[1].length - 1);
+      }
+      m.traits = lines.join("\n");
+    }
     return m;
   }
   state.combat.entities.forEach((e) => { e.id = e.id || uid(); e.order = e.order || ++orderCounter; upgradeMonster(e); });
@@ -314,11 +332,24 @@
   const ABILITY_NAMES = { str: "Strength", dex: "Dexterity", con: "Constitution", int: "Intelligence", wis: "Wisdom", cha: "Charisma" };
   const saveBonus = (e, k) => (e.saves && e.saves[k] != null ? e.saves[k] : e.abilities && e.abilities[k] != null ? GM.abilityMod(e.abilities[k]) : null);
   // One compact row under the HP bar. The switch decides whether a tap rolls an ability check or a save.
+  // A bestiary monster with the same name, preferring the core rules.
+  function bestiaryMatch(name) {
+    if (!bestiary) return null;
+    const base = String(name || "").toLowerCase().replace(/\s+\d+$/, "").trim();
+    const hits = bestiary.monsters.filter((m) => m.name.toLowerCase() === base);
+    return hits.find((m) => m.source === "5e Core Rules") || hits[0] || null;
+  }
   function statsHtml(e) {
     const hasAbilities = e.abilities && GM.ABILITIES.some((k) => e.abilities[k] != null);
     const saves = e.saves || {};
     const skills = Object.entries(e.skills || {});
-    if (!hasAbilities && !Object.keys(saves).length && !skills.length) return "";
+    if (!hasAbilities && !Object.keys(saves).length && !skills.length) {
+      if (!bestiary) { loadBestiary().then(() => renderDetail()).catch(() => {}); }
+      const match = bestiaryMatch(e.name);
+      return '<div class="abilities missing"><span class="hint">No ability scores saved for this creature.</span>' +
+        (match ? '<button class="btn small" data-act="fill-stats" data-id="' + esc(match.id) + '">Fill from bestiary (' + esc(match.source) + ")</button>" : "") +
+        '<button class="btn small ghost" data-act="edit">Enter them</button></div>';
+    }
     const saveMode = !!state.prefs.saveMode;
     let html = '<div class="abilities"><div class="abilities-head"><span class="abilities-title">Abilities</span>' +
       '<button class="switch" data-act="save-mode" role="switch" aria-checked="' + saveMode + '"><span class="track" aria-hidden="true"><span class="knob"></span></span>Saving throws</button></div><div class="stats">';
@@ -412,6 +443,26 @@
       addLog(e.name + (e.conditions.includes(c) ? " is now " : " is no longer ") + c.toLowerCase());
       saveCombat();
       return renderCombat();
+    }
+    if (t.dataset.act === "fill-stats") {
+      const src = bestiary && bestiary.monsters.find((m) => m.id === t.dataset.id);
+      if (!src) return;
+      const copy = (target) => {
+        if (src.abilities) target.abilities = clone(src.abilities);
+        if (src.saves) target.saves = clone(src.saves);
+        if (src.skills) target.skills = clone(src.skills);
+      };
+      copy(e);
+      // Fix the saved copy in your monsters too, so the next fight has them.
+      const base = e.name.toLowerCase().replace(/\s+\d+$/, "").trim();
+      const saved = state.monsters.filter((m) => m.name.toLowerCase() === base && !m.abilities);
+      saved.forEach(copy);
+      state.combat.entities.filter((x) => x !== e && x.kind === "creature" && !x.abilities && x.name.toLowerCase().replace(/\s+\d+$/, "").trim() === base).forEach(copy);
+      if (saved.length) saveMonsters();
+      saveCombat();
+      renderDetail();
+      toast("Stats filled from " + src.source + (saved.length ? ", and saved to your monsters." : "."));
+      return;
     }
     if (t.dataset.act === "save-mode") { state.prefs.saveMode = !state.prefs.saveMode; savePrefs(); return renderDetail(); }
     if (t.dataset.ab) {
