@@ -653,9 +653,10 @@
           Object.assign(target, data);
           addLog("Edited " + name);
         } else {
+          data.name = reserveNames(name, 1)[0];
           const added = addEntity(data);
           state.selectedId = added.id;
-          addLog(name + " joins at initiative " + data.initiative);
+          addLog(data.name + " joins at initiative " + data.initiative);
         }
         saveCombat();
         renderCombat();
@@ -855,20 +856,33 @@
   /* ---------- Add monsters to combat ---------- */
   // Adds `count` copies of a monster. Copies are numbered, continuing after any already in the fight
   // ("Sahuagin 3" if 1 and 2 are there). mode: "each" rolls per copy, "group" rolls once, "fixed" uses `fixed`.
+  // Names for `count` new creatures called `base`. Copies are numbered 1, 2, 3…: if a plain "Sahuagin" is
+  // already in the fight it becomes "Sahuagin 1", and new ones continue after the highest number.
+  function reserveNames(base, count) {
+    const numberRe = new RegExp("^" + base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?: (\\d+))?$", "i");
+    const same = state.combat.entities.filter((e) => e.kind === "creature" && numberRe.test(e.name));
+    if (!same.length && count === 1) return [base];
+    let n = 0;
+    same.forEach((e) => { const m = e.name.match(numberRe); if (m[1]) n = Math.max(n, +m[1]); });
+    same.forEach((e) => {
+      if (e.name.match(numberRe)[1]) return;
+      const renamed = base + " " + ++n;
+      addLog(e.name + " is now " + renamed);
+      e.name = renamed;
+    });
+    return Array.from({ length: count }, () => base + " " + ++n);
+  }
   function addCopies(monster, count, base, mode, fixed) {
     const bonus = monster.initiative_bonus || 0;
     const group = mode === "group" ? rollInitiative(bonus) : null;
-    const taken = state.combat.entities.map((e) => e.name);
-    const numberRe = new RegExp("^" + base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?: (\\d+))?$");
-    let n = taken.reduce((max, name) => { const m = name.match(numberRe); return m ? Math.max(max, m[1] ? +m[1] : 1) : max; }, 0);
-    const numbered = count > 1 || n > 0;
+    const names = reserveNames(base, count);
     let first = null;
     for (let i = 0; i < count; i++) {
       const item = clone(monster);
       delete item.id;
       delete item.count;
       item.kind = "creature";
-      item.name = numbered ? base + " " + ++n : base;
+      item.name = names[i];
       item.initiative = fixed != null ? fixed : group != null ? group : rollInitiative(bonus);
       item.max_hp = item.max_hp != null ? item.max_hp : item.hp;
       item.hp = item.max_hp;
