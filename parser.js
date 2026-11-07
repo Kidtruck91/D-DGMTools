@@ -224,6 +224,8 @@
     if (ac) monster.ac = parseInt(ac[1], 10);
     const hp = flat.match(/(?:Hit Points|\bHP)\s*:?\s*(\d+)/i);
     if (hp) monster.hp = monster.max_hp = parseInt(hp[1], 10);
+    const cr = flat.match(/^(?:Challenge(?: Rating)?|CR)\s*:?\s*(\d+(?:\/\d+)?|½|¼|⅛)/im);
+    if (cr) monster.cr = { "½": "1/2", "¼": "1/4", "⅛": "1/8" }[cr[1]] || cr[1];
     const src = flat.match(/^Source:?\s*(.+?)(?:,\s*(?:pg|page)\.?.*)?$/im);
     if (src) monster.source = src[1].trim();
 

@@ -28,6 +28,12 @@ Your monsters and the current combat are saved on the device automatically. Use 
 - Filter your library by source book (Ghosts of Saltmarsh, Basic Rules, homebrew…).
 - **File → Import** accepts `saltmarsh_monsters.json` from the old Python tracker.
 
+**Encounters**
+- Plan fights ahead of the session: name, notes (location, tactics, treasure), monsters from your library or the bestiary with how many of each, and events like lair actions. Each group can roll initiative per creature or once for all. Total XP is shown when the monsters have a CR.
+- **Run** drops the encounter into combat with initiative rolled. If players are already in the fight, choose whether to add to them or replace them; numbering continues (Sahuagin 4, 5…).
+- **Combat → More → Save as encounter** turns the fight on the table into an encounter.
+- **Monsters → File → Export** backs up monsters and encounters together; **Import** on another device brings them across.
+
 **Dice**: quick dice buttons, any expression like `4d6+2`, and d20 with advantage or disadvantage.
 
 Tap **Screen stays on** to stop the tablet from sleeping mid-fight.

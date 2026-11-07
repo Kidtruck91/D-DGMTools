@@ -154,6 +154,13 @@ Spear. Melee or Ranged Weapon Attack: +7 to hit, reach 5 ft. and range 20/60 ft.
   assert.deepStrictEqual([m.attacks[0].damage, m.attacks[0].alt], ["2d6+4", [{ damage: "2d8+4", label: "two-handed" }]]);
 });
 
+test("challenge rating is read in both formats", () => {
+  assert.strictEqual(GM.parseStatBlock(classic).cr, "2");
+  assert.strictEqual(GM.parseStatBlock(ddbLayout).cr, "3");
+  assert.strictEqual(GM.parseStatBlock(modern).cr, "2");
+  assert.strictEqual(GM.parseStatBlock(classic.replace("Challenge 2 (450 XP)", "Challenge 1/4 (50 XP)")).cr, "1/4");
+});
+
 test("save-based action keeps damage, no attack bonus", () => {
   const a = GM.parseAction("Poison Breath (Recharge 5-6)", "The dragon exhales poisonous gas in a 30-foot cone. Each creature in that area must make a DC 14 Constitution saving throw, taking 42 (12d6) poison damage on a failed save, or half as much damage on a successful one.");
   assert.strictEqual(a.bonus, null);

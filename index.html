@@ -16,6 +16,7 @@
   <span class="brand">GM Tools</span>
   <nav class="tabs" aria-label="Sections">
     <button class="tab" data-view="combat" aria-current="page">Combat</button>
+    <button class="tab" data-view="encounters">Encounters</button>
     <button class="tab" data-view="monsters">Monsters</button>
     <button class="tab" data-view="dice">Dice</button>
   </nav>
@@ -49,6 +50,7 @@
           <details class="menu">
             <summary class="btn ghost">More</summary>
             <div class="menu-pop">
+              <button class="btn ghost" id="save-as-encounter">Save as encounter</button>
               <button class="btn ghost" id="save-combat">Save combat to file</button>
               <button class="btn ghost" id="load-combat">Load combat from file</button>
               <button class="btn ghost danger-text" id="new-combat">Clear combat</button>
@@ -78,8 +80,8 @@
         <details class="menu">
           <summary class="btn ghost">File</summary>
           <div class="menu-pop">
-            <button class="btn ghost" id="import-lib">Import monsters from file</button>
-            <button class="btn ghost" id="export-lib">Export monsters to file</button>
+            <button class="btn ghost" id="import-lib">Import from file</button>
+            <button class="btn ghost" id="export-lib">Export monsters and encounters</button>
           </div>
         </details>
       </div>
@@ -98,6 +100,15 @@
       <button class="btn" id="best-more" hidden>Show more</button>
       <p class="hint">Free monsters from the 5e SRD and third-party books, via <a href="https://open5e.com" target="_blank" rel="noopener">Open5e</a>, built in and available offline. Official books like Ghosts of Saltmarsh aren't included; use Paste stat blocks for those. <a href="data/OPEN5E-LICENSES.md" target="_blank" rel="noopener">Sources and licenses</a></p>
     </div>
+  </section>
+
+  <!-- ENCOUNTERS -->
+  <section id="view-encounters" class="view" aria-label="Encounters" hidden>
+    <div class="toolbar wrap">
+      <input type="search" id="enc-search" placeholder="Search encounters" aria-label="Search encounters">
+      <button class="btn primary" id="new-encounter">New encounter</button>
+    </div>
+    <ul class="monster-list enc-list" id="enc-list"></ul>
   </section>
 
   <!-- DICE -->
@@ -205,6 +216,51 @@
     <div class="dialog-actions">
       <button type="button" class="btn ghost" data-close>Cancel</button>
       <button type="submit" class="btn primary" id="bulk-save">Save monsters</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Encounter editor -->
+<dialog id="enc-dialog" class="sheet wide">
+  <form method="dialog" id="enc-form">
+    <h2 id="enc-title">New encounter</h2>
+    <div class="grid-2">
+      <label class="span-2">Name<input name="name" required placeholder="Sahuagin raid on the Sea Ghost"></label>
+      <label class="span-2">Notes<textarea name="notes" rows="3" placeholder="Where it happens, tactics, terrain, treasure…"></textarea></label>
+    </div>
+    <div class="enc-columns">
+      <div class="enc-col">
+        <h3>In this encounter</h3>
+        <ul class="enc-rows" id="enc-rows"></ul>
+        <p class="enc-xp" id="enc-xp"></p>
+        <button type="button" class="btn small" id="enc-add-event">Add event</button>
+      </div>
+      <div class="enc-col">
+        <h3>Add monsters</h3>
+        <div class="toolbar wrap">
+          <input type="search" id="enc-search-mon" placeholder="Search your monsters and the bestiary" aria-label="Search monsters">
+          <select id="enc-source" aria-label="Filter by source"></select>
+        </div>
+        <ul class="pick-list" id="enc-pick"></ul>
+      </div>
+    </div>
+    <p class="form-error" id="enc-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save encounter</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Run an encounter into a combat that already has people in it -->
+<dialog id="run-dialog" class="sheet narrow">
+  <form method="dialog" id="run-form">
+    <h2 id="run-title">Run encounter</h2>
+    <p id="run-text"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="button" class="btn" data-run="replace">Replace them</button>
+      <button type="button" class="btn primary" data-run="add">Add to them</button>
     </div>
   </form>
 </dialog>

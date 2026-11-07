@@ -123,6 +123,7 @@
     state.prefs.view = name;
     savePrefs();
     if (name === "monsters") renderLibrary();
+    if (name === "encounters") renderEncounters();
   }
   $$(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
 
@@ -716,7 +717,7 @@
           '<div class="mon-actions"><button class="btn small primary" data-lib="add" data-id="' + m.id + '">Add to combat</button><button class="btn small" data-lib="edit" data-id="' + m.id + '">Edit</button><button class="btn small ghost" data-lib="copy" data-id="' + m.id + '">Duplicate</button><button class="btn small ghost danger-text" data-lib="delete" data-id="' + m.id + '">Delete</button></div></li>').join("")
       : state.monsters.length
         ? '<li class="empty">No monsters match. Clear the search or pick another source.</li>'
-        : '<li class="empty">Your library is empty. Paste a stat block from D&amp;D Beyond, copy one from the Bestiary, or import the saltmarsh_monsters.json file from the old tracker with File → Import.</li>';
+        : '<li class="empty">Your library is empty. Paste a stat block from D&amp;D Beyond, copy one from the Bestiary, or import a backup or the old saltmarsh_monsters.json with File → Import.</li>';
   }
   $("#lib-search").addEventListener("input", renderLibrary);
   $("#lib-source").addEventListener("change", () => { state.prefs.libSource = $("#lib-source").value; savePrefs(); renderLibrary(); });
@@ -731,13 +732,30 @@
     if (b.dataset.lib === "delete" && confirm("Delete " + m.name + " from your monsters?")) { state.monsters = state.monsters.filter((x) => x !== m); saveMonsters(); renderLibrary(); }
     if (b.dataset.lib === "add") { openAddDialog(); chooseForAdd(m.id); }
   });
-  $("#export-lib").addEventListener("click", () => { closeMenus(); download("gm-tools-monsters.json", state.monsters.map(({ id, ...rest }) => rest)); });
+  $("#export-lib").addEventListener("click", () => {
+    closeMenus();
+    download("gm-tools-backup.json", { version: 3, monsters: state.monsters.map(({ id, ...rest }) => rest), encounters: state.encounters });
+  });
   $("#import-lib").addEventListener("click", () => {
     closeMenus();
     pickFile((data) => {
       const list = Array.isArray(data) ? data : data && Array.isArray(data.monsters) ? data.monsters : null;
-      if (!list) { toast("That file doesn't contain a monster list."); return; }
-      const fallbackSource = prompt("Source book for monsters that don't have one (leave blank to skip):", state.prefs.lastSource || "") || "";
+      const encounters = data && Array.isArray(data.encounters) ? data.encounters : [];
+      if (!list && !encounters.length) { toast("That file doesn't contain monsters or encounters."); return; }
+      let encAdded = 0;
+      encounters.forEach((enc) => {
+        if (!enc || !enc.name || !Array.isArray(enc.rows)) return;
+        if (enc.id && state.encounters.some((e) => e.id === enc.id)) return;
+        const copy = clone(enc);
+        copy.id = copy.id || uid();
+        copy.rows.forEach((r) => { if (r.kind === "creature") upgradeMonster(r.monster); });
+        state.encounters.push(copy);
+        encAdded++;
+      });
+      if (encAdded) saveEncounters();
+      if (!list || !list.length) { toast("Imported " + encAdded + " encounter" + (encAdded === 1 ? "" : "s") + "."); return; }
+      const needsSource = list.some((m) => m && m.name && !m.source);
+      const fallbackSource = needsSource ? prompt("Source book for monsters that don't have one (leave blank to skip):", state.prefs.lastSource || "") || "" : "";
       const key = (m) => (m.name + "|" + (m.source || "")).toLowerCase();
       const existing = new Set(state.monsters.map(key));
       let added = 0, skipped = 0;
@@ -756,7 +774,7 @@
       });
       saveMonsters();
       renderLibrary();
-      toast("Imported " + added + " monster" + (added === 1 ? "" : "s") + (skipped ? "; skipped " + skipped + " already in your library" : "") + ".");
+      toast("Imported " + added + " monster" + (added === 1 ? "" : "s") + (encAdded ? " and " + encAdded + " encounter" + (encAdded === 1 ? "" : "s") : "") + (skipped ? "; skipped " + skipped + " already in your library" : "") + ".");
     });
   });
 
@@ -835,6 +853,33 @@
   });
 
   /* ---------- Add monsters to combat ---------- */
+  // Adds `count` copies of a monster. Copies are numbered, continuing after any already in the fight
+  // ("Sahuagin 3" if 1 and 2 are there). mode: "each" rolls per copy, "group" rolls once, "fixed" uses `fixed`.
+  function addCopies(monster, count, base, mode, fixed) {
+    const bonus = monster.initiative_bonus || 0;
+    const group = mode === "group" ? rollInitiative(bonus) : null;
+    const taken = state.combat.entities.map((e) => e.name);
+    const numberRe = new RegExp("^" + base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?: (\\d+))?$");
+    let n = taken.reduce((max, name) => { const m = name.match(numberRe); return m ? Math.max(max, m[1] ? +m[1] : 1) : max; }, 0);
+    const numbered = count > 1 || n > 0;
+    let first = null;
+    for (let i = 0; i < count; i++) {
+      const item = clone(monster);
+      delete item.id;
+      delete item.count;
+      item.kind = "creature";
+      item.name = numbered ? base + " " + ++n : base;
+      item.initiative = fixed != null ? fixed : group != null ? group : rollInitiative(bonus);
+      item.max_hp = item.max_hp != null ? item.max_hp : item.hp;
+      item.hp = item.max_hp;
+      item.conditions = [];
+      delete item.temp_hp;
+      const added = addEntity(item);
+      first = first || added;
+      addLog(item.name + " joins at initiative " + item.initiative);
+    }
+    return first;
+  }
   let addChoice = null;
   function openAddDialog() {
     const form = $("#add-form");
@@ -886,25 +931,12 @@
     const form = ev.target;
     const count = Math.max(1, Math.min(20, parseInt(form.count.value, 10) || 1));
     const base = form.name.value.trim() || addChoice.name;
-    const bonus = addChoice.initiative_bonus || 0;
     let fixed = null;
     if (form.initMode.value === "fixed") {
       try { fixed = int(form.initValue.value, null); } catch (e) { toast(e.message); return; }
       if (fixed == null) { toast("Enter an initiative value."); return; }
     }
-    const group = form.initMode.value === "group" ? rollInitiative(bonus) : null;
-    let first = null;
-    for (let i = 1; i <= count; i++) {
-      const item = clone(addChoice);
-      delete item.id;
-      item.kind = "creature";
-      item.name = count > 1 ? base + " " + i : base;
-      item.initiative = fixed != null ? fixed : group != null ? group : rollInitiative(bonus);
-      item.max_hp = item.max_hp != null ? item.max_hp : item.hp;
-      const added = addEntity(item);
-      first = first || added;
-      addLog(item.name + " joins at initiative " + item.initiative);
-    }
+    const first = addCopies(addChoice, count, base, form.initMode.value, fixed);
     state.selectedId = first.id;
     saveCombat();
     $("#add-dialog").close();
@@ -999,6 +1031,248 @@
     if (t.dataset.sub === "bestiary") renderBestiary();
     else renderLibrary();
   }));
+
+  /* ---------- Encounters ----------
+     { id, name, notes, rows: [{ kind: "creature", monster, count, init: "each"|"group" } | { kind: "event", name, initiative, description }] }
+     Monsters are stored as copies, so an encounter still works if the library changes. */
+  state.encounters = store.get("encounters", []);
+  state.encounters.forEach((enc) => (enc.rows || []).forEach((r) => { if (r.kind === "creature") upgradeMonster(r.monster); }));
+  const saveEncounters = () => store.set("encounters", state.encounters);
+  const CR_XP = { "0": 10, "1/8": 25, "1/4": 50, "1/2": 100, "1": 200, "2": 450, "3": 700, "4": 1100, "5": 1800, "6": 2300, "7": 2900, "8": 3900, "9": 5000, "10": 5900, "11": 7200, "12": 8400, "13": 10000, "14": 11500, "15": 13000, "16": 15000, "17": 18000, "18": 20000, "19": 22000, "20": 25000, "21": 33000, "22": 41000, "23": 50000, "24": 62000, "25": 75000, "26": 90000, "27": 105000, "28": 120000, "29": 135000, "30": 155000 };
+  const xpFor = (m) => (m && m.cr != null && CR_XP[String(m.cr)] != null ? CR_XP[String(m.cr)] : null);
+  function encounterXp(rows) {
+    let total = 0, unknown = 0;
+    rows.forEach((r) => { if (r.kind !== "creature") return; const xp = xpFor(r.monster); if (xp == null) unknown += r.count; else total += xp * r.count; });
+    return { total, unknown };
+  }
+  const fmtXp = (n) => n.toLocaleString("en-US");
+  function xpText(rows) {
+    const { total, unknown } = encounterXp(rows);
+    if (!rows.some((r) => r.kind === "creature")) return "";
+    return "Total XP " + fmtXp(total) + (unknown ? " (" + unknown + " without a CR not counted)" : "");
+  }
+  function encounterSummary(enc) {
+    return enc.rows.map((r) => (r.kind === "creature" ? (r.count > 1 ? r.count + " " : "") + r.monster.name : "Event: " + r.name)).join(" · ") || "Empty";
+  }
+  // A clean copy of a monster for an encounter: no combat state or ids.
+  function snapshot(m) {
+    const c = clone(m);
+    ["id", "_search", "initiative", "order", "conditions", "temp_hp", "kind"].forEach((k) => delete c[k]);
+    c.hp = c.max_hp != null ? c.max_hp : c.hp;
+    return c;
+  }
+
+  function renderEncounters() {
+    const q = $("#enc-search").value.trim().toLowerCase();
+    const list = state.encounters
+      .filter((e) => !q || e.name.toLowerCase().includes(q) || (e.notes || "").toLowerCase().includes(q) || encounterSummary(e).toLowerCase().includes(q))
+      .sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    $("#enc-list").innerHTML = list.length
+      ? list.map((e) => '<li class="mon enc"><div><div class="mon-name">' + esc(e.name) + '</div><div class="mon-meta">' + esc(encounterSummary(e)) + "</div>" +
+          (xpText(e.rows) ? '<div class="mon-meta">' + esc(xpText(e.rows)) + "</div>" : "") +
+          (e.notes ? '<p class="enc-notes">' + esc(e.notes) + "</p>" : "") + "</div>" +
+          '<div class="mon-actions"><button class="btn small primary" data-enc="run" data-id="' + e.id + '">Run</button><button class="btn small" data-enc="edit" data-id="' + e.id + '">Edit</button>' +
+          '<button class="btn small ghost" data-enc="copy" data-id="' + e.id + '">Duplicate</button><button class="btn small ghost danger-text" data-enc="delete" data-id="' + e.id + '">Delete</button></div></li>').join("")
+      : state.encounters.length
+        ? '<li class="empty">No encounters match.</li>'
+        : '<li class="empty">No encounters yet. Use New encounter to plan one ahead of the session, or set up a fight on the Combat tab and choose More → Save as encounter.</li>';
+  }
+  $("#enc-search").addEventListener("input", renderEncounters);
+  $("#new-encounter").addEventListener("click", () => openEncounterEditor(null));
+  $("#enc-list").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-enc]");
+    if (!b) return;
+    const enc = state.encounters.find((e) => e.id === b.dataset.id);
+    if (!enc) return;
+    if (b.dataset.enc === "run") runEncounter(enc);
+    if (b.dataset.enc === "edit") openEncounterEditor(enc);
+    if (b.dataset.enc === "copy") openEncounterEditor(Object.assign(clone(enc), { id: null, name: enc.name + " (copy)" }));
+    if (b.dataset.enc === "delete" && confirm("Delete the encounter " + enc.name + "? Your monsters aren't affected.")) {
+      state.encounters = state.encounters.filter((e) => e !== enc);
+      saveEncounters();
+      renderEncounters();
+    }
+  });
+
+  // Editor
+  let encDraft = null;
+  function openEncounterEditor(enc) {
+    encDraft = enc ? clone(enc) : { id: null, name: "", notes: "", rows: [] };
+    const form = $("#enc-form");
+    $("#enc-title").textContent = enc && enc.id ? "Edit " + enc.name : enc ? "Save encounter" : "New encounter";
+    form.name.value = encDraft.name || "";
+    form.notes.value = encDraft.notes || "";
+    $("#enc-error").textContent = "";
+    $("#enc-search-mon").value = "";
+    const fillSources = () => fillSourceSelect($("#enc-source"), Array.from(new Set(refreshSourceOptions().concat(bestiarySources()))), $("#enc-source").value || state.prefs.libSource || "");
+    fillSources();
+    renderEncRows();
+    renderEncPick();
+    $("#enc-dialog").showModal();
+    if (!encDraft.name) form.name.focus();
+    if (!bestiary) loadBestiary().then(() => { fillSources(); renderEncPick(); }).catch(() => {});
+  }
+  function readEncInputs() {
+    // Keep typed values when the row list is redrawn.
+    $$("#enc-rows [data-row]").forEach((li) => {
+      const r = encDraft.rows[+li.dataset.row];
+      if (!r) return;
+      $$("[data-f]", li).forEach((input) => {
+        const f = input.dataset.f;
+        if (f === "initiative") { const v = parseInt(input.value, 10); r.initiative = Number.isFinite(v) ? v : input.value; }
+        else r[f] = input.value;
+      });
+    });
+  }
+  function renderEncRows() {
+    const rows = encDraft.rows;
+    $("#enc-rows").innerHTML = rows.length
+      ? rows.map((r, i) => {
+          if (r.kind === "event") {
+            return '<li class="enc-row event" data-row="' + i + '"><div class="enc-event-fields">' +
+              '<label>Event<input data-f="name" value="' + esc(r.name) + '" placeholder="Lair action"></label>' +
+              '<label>Initiative<input data-f="initiative" inputmode="numeric" value="' + esc(r.initiative) + '"></label>' +
+              '<label class="span-2">What happens<input data-f="description" value="' + esc(r.description) + '"></label></div>' +
+              '<button type="button" class="btn ghost small danger-text" data-row-act="remove" aria-label="Remove ' + esc(r.name || "event") + '">Remove</button></li>';
+          }
+          const m = r.monster;
+          const meta = [m.source, m.cr != null && m.cr !== "" ? "CR " + m.cr : null, m.hp != null ? "HP " + m.hp : null, m.ac != null ? "AC " + m.ac : null].filter(Boolean).join(" · ");
+          return '<li class="enc-row" data-row="' + i + '"><div class="enc-row-main"><div class="enc-row-name">' + esc(m.name) + '</div><div class="mon-meta">' + esc(meta) + "</div></div>" +
+            '<div class="stepper" role="group" aria-label="How many ' + esc(m.name) + '"><button type="button" class="btn small" data-row-act="dec" aria-label="One fewer">−</button><span class="stepper-n">' + r.count + '</span><button type="button" class="btn small" data-row-act="inc" aria-label="One more">+</button></div>' +
+            (r.count > 1 ? '<select data-f="init" aria-label="Initiative for ' + esc(m.name) + '"><option value="each"' + (r.init !== "group" ? " selected" : "") + '>Roll each</option><option value="group"' + (r.init === "group" ? " selected" : "") + ">One roll for all</option></select>" : "") +
+            '<button type="button" class="btn ghost small danger-text" data-row-act="remove" aria-label="Remove ' + esc(m.name) + '">Remove</button></li>';
+        }).join("")
+      : '<li class="empty" style="padding:12px">Nothing here yet. Search on the right to add monsters.</li>';
+    $("#enc-xp").textContent = xpText(rows);
+  }
+  const ENC_PICK_LIMIT = 60;
+  function renderEncPick() {
+    const q = $("#enc-search-mon").value;
+    const src = $("#enc-source").value;
+    const mine = filterMonsters(q, src).map((m) => ({ id: m.id, name: m.name, meta: monsterMeta(m) }));
+    const built = (src === "__none" ? [] : filterBestiary(q, src, "")).map((m) => ({ id: m.id, name: m.name, meta: bestiaryMeta(m) }));
+    const all = mine.concat(built);
+    $("#enc-pick").innerHTML = all.length
+      ? all.slice(0, ENC_PICK_LIMIT).map((m) => '<li><button type="button" data-enc-pick="' + esc(m.id) + '"><span>' + esc(m.name) + '</span><span class="meta">' + esc(m.meta) + "</span></button></li>").join("") +
+        (all.length > ENC_PICK_LIMIT ? '<li class="empty" style="padding:12px">' + (all.length - ENC_PICK_LIMIT) + " more. Type a name or pick a source to narrow the list.</li>" : "")
+      : '<li class="empty" style="padding:12px">No monsters match.</li>';
+  }
+  $("#enc-search-mon").addEventListener("input", renderEncPick);
+  $("#enc-source").addEventListener("change", renderEncPick);
+  $("#enc-pick").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-enc-pick]");
+    if (!b) return;
+    const id = b.dataset.encPick;
+    const mine = state.monsters.find((m) => m.id === id);
+    const built = !mine && bestiary ? bestiary.monsters.find((m) => m.id === id) : null;
+    const monster = mine ? snapshot(mine) : built ? snapshot(fullMonster(built)) : null;
+    if (!monster) return;
+    readEncInputs();
+    const same = encDraft.rows.find((r) => r.kind === "creature" && monsterKey(r.monster) === monsterKey(monster));
+    if (same) same.count = Math.min(20, same.count + 1);
+    else encDraft.rows.push({ kind: "creature", monster, count: 1, init: "each" });
+    renderEncRows();
+    toast(monster.name + (same ? " ×" + same.count : " added") + ".");
+  });
+  $("#enc-rows").addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-row-act]");
+    if (!b) return;
+    readEncInputs();
+    const i = +b.closest("[data-row]").dataset.row;
+    const r = encDraft.rows[i];
+    if (b.dataset.rowAct === "remove") encDraft.rows.splice(i, 1);
+    if (b.dataset.rowAct === "inc") r.count = Math.min(20, r.count + 1);
+    if (b.dataset.rowAct === "dec") { if (r.count <= 1) encDraft.rows.splice(i, 1); else r.count -= 1; }
+    renderEncRows();
+  });
+  $("#enc-rows").addEventListener("change", (ev) => { if (ev.target.dataset.f === "init") readEncInputs(); });
+  $("#enc-add-event").addEventListener("click", () => {
+    readEncInputs();
+    encDraft.rows.push({ kind: "event", name: "Lair action", initiative: 20, description: "" });
+    renderEncRows();
+    const inputs = $$('#enc-rows [data-f="name"]');
+    if (inputs.length) inputs[inputs.length - 1].select();
+  });
+  $("#enc-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    readEncInputs();
+    const form = ev.target;
+    const name = form.name.value.trim();
+    if (!name) { $("#enc-error").textContent = "Give the encounter a name."; form.name.focus(); return; }
+    for (const r of encDraft.rows) {
+      if (r.kind === "event" && !Number.isInteger(r.initiative)) { $("#enc-error").textContent = "Event “" + (r.name || "Event") + "”: initiative must be a whole number."; return; }
+    }
+    encDraft.rows.forEach((r) => { if (r.kind === "event") { r.name = (r.name || "").trim() || "Event"; r.description = (r.description || "").trim(); } });
+    encDraft.name = name;
+    encDraft.notes = form.notes.value.trim();
+    encDraft.updated = Date.now();
+    const existing = encDraft.id && state.encounters.find((e) => e.id === encDraft.id);
+    if (existing) Object.assign(existing, encDraft);
+    else { encDraft.id = uid(); state.encounters.push(encDraft); }
+    saveEncounters();
+    renderEncounters();
+    $("#enc-dialog").close();
+    toast(name + " saved.");
+  });
+
+  // Running
+  let runTarget = null;
+  function runEncounter(enc) {
+    if (!enc.rows.length) { toast("This encounter is empty. Edit it to add monsters."); return; }
+    const n = state.combat.entities.length;
+    if (!n) { startEncounter(enc, "replace"); return; }
+    runTarget = enc;
+    $("#run-title").textContent = "Run " + enc.name;
+    $("#run-text").textContent = "The combat already has " + n + (n === 1 ? " combatant" : " combatants") + ". Add the encounter to them (keeps your players), or replace them?";
+    $("#run-dialog").showModal();
+  }
+  $$("[data-run]").forEach((b) => b.addEventListener("click", () => {
+    $("#run-dialog").close();
+    if (runTarget) startEncounter(runTarget, b.dataset.run);
+  }));
+  function startEncounter(enc, mode) {
+    if (mode === "replace") {
+      state.combat = { round: 1, activeId: null, entities: [] };
+      state.lastRoll = null;
+      state.log = [];
+    }
+    addLog("Encounter: " + enc.name);
+    let first = null;
+    enc.rows.forEach((r) => {
+      if (r.kind === "event") {
+        // Running the same encounter again shouldn't double its lair actions.
+        if (state.combat.entities.some((e) => e.kind === "event" && e.name === r.name && e.initiative === r.initiative)) return;
+        const added = addEntity({ kind: "event", name: r.name, initiative: r.initiative, initiative_bonus: 0, description: r.description || "" });
+        addLog(r.name + " added at initiative " + r.initiative);
+        first = first || added;
+        return;
+      }
+      const added = addCopies(r.monster, r.count, r.monster.name, r.count > 1 && r.init === "group" ? "group" : "each", null);
+      first = first || added;
+    });
+    state.selectedId = first ? first.id : null;
+    saveCombat();
+    showView("combat");
+    renderCombat();
+    toast(enc.name + " is ready. Add any missing players, then start combat.");
+  }
+
+  // Save the current combat as an encounter: copies grouped by name, players and monsters alike.
+  $("#save-as-encounter").addEventListener("click", () => {
+    closeMenus();
+    if (!state.combat.entities.length) { toast("Add combatants first, then save them as an encounter."); return; }
+    const rows = [];
+    sorted().forEach((e) => {
+      if (e.kind === "event") { rows.push({ kind: "event", name: e.name, initiative: e.initiative, description: e.description || "" }); return; }
+      const base = e.name.replace(/\s+\d+$/, "");
+      const monster = Object.assign(snapshot(e), { name: base });
+      const same = rows.find((r) => r.kind === "creature" && monsterKey(r.monster) === monsterKey(monster));
+      if (same) { same.count += 1; return; }
+      rows.push({ kind: "creature", monster, count: 1, init: "each" });
+    });
+    openEncounterEditor({ id: null, name: "", notes: "", rows });
+    toast("Name the encounter and remove any players you don't want in it.");
+  });
 
   /* ---------- Dice ---------- */
   const diceHistory = [];
